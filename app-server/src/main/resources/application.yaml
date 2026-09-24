@@ -1,0 +1,10 @@
+server:
+  port: 443
+  reality:
+    private-key: "wAINCWd2CtsawuKoRTm7d05zRjtMQiJbwFoD87tDwVA"
+    short-ids: ["98653321"]
+    acceptable-snis: ["httpbin.org", "www.httpbin.org"]
+    fallback-dest:
+      host: "httpbin.org"
+      port: 443
+    allowed-clock-skew-seconds: 60
