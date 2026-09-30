@@ -2,11 +2,7 @@ package org.givashot.reality.tls
 
 import io.netty.bootstrap.Bootstrap
 import io.netty.buffer.ByteBuf
-import io.netty.channel.ChannelDuplexHandler
-import io.netty.channel.ChannelHandlerContext
-import io.netty.channel.ChannelInitializer
-import io.netty.channel.ChannelPromise
-import io.netty.channel.EventLoopGroup
+import io.netty.channel.*
 import io.netty.channel.socket.SocketChannel
 import io.netty.channel.socket.nio.NioSocketChannel
 import io.netty.handler.ssl.SslContextBuilder
@@ -17,7 +13,7 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.SNIHostName
 
 data class HandshakeRecordProfile(
-    /** °´Ë³ĞòÅÅÁĞ£ºEncryptedExtensions, Certificate, CertificateVerify, Finished(, NewSessionTicket...) Ã¿Ìõ record µÄÃÜÎÄ³¤¶È */
+    /** æŒ‰é¡ºåºæ’åˆ—ï¼šEncryptedExtensions, Certificate, CertificateVerify, Finished(, NewSessionTicket...) æ¯æ¡ record çš„å¯†æ–‡é•¿åº¦ */
     val recordLengths: List<Int>,
 )
 
@@ -26,9 +22,9 @@ private const val CONTENT_TYPE_HANDSHAKE = 0x16
 private const val CONTENT_TYPE_APPLICATION_DATA = 0x17
 
 /**
- * ÓÃ Netty ×Ô´øµÄ SslHandler ×÷ÎªÒ»¸öÕæÊµ TLS ¿Í»§¶ËÁ¬½Ó fallback dest£¬
- * ÔÚ record ²ãÔ­Ê¼×Ö½ÚÉÏ"ÍµÌı" ServerHello Ö®ºó¡¢ÎÒÃÇ×Ô¼º·¢³ö Finished Ö®Ç°
- * ÊÕµ½µÄËùÓĞ 0x17 (application_data) record µÄ³¤¶È¡£È«³Ì²»ĞèÒª½âÃÜÄÚÈİ¡£
+ * ç”¨ Netty è‡ªå¸¦çš„ SslHandler ä½œä¸ºä¸€ä¸ªçœŸå® TLS å®¢æˆ·ç«¯è¿æ¥ fallback destï¼Œ
+ * åœ¨ record å±‚åŸå§‹å­—èŠ‚ä¸Š"å·å¬" ServerHello ä¹‹åã€æˆ‘ä»¬è‡ªå·±å‘å‡º Finished ä¹‹å‰
+ * æ”¶åˆ°çš„æ‰€æœ‰ 0x17 (application_data) record çš„é•¿åº¦ã€‚å…¨ç¨‹ä¸éœ€è¦è§£å¯†å†…å®¹ã€‚
  */
 class FallbackHandshakeRecordModel(
     private val fallbackDest: RealityConfig.FallbackDest,
@@ -46,7 +42,7 @@ class FallbackHandshakeRecordModel(
         try {
             val resultFuture = CompletableFuture<HandshakeRecordProfile>()
             val sslContext = SslContextBuilder.forClient()
-                .trustManager(InsecureTrustManagerFactory.INSTANCE) // Ö»ÊÇÌ½²âĞĞÎª£¬²»ĞèÒªĞ£ÑéÖ¤ÊéÁ´
+                .trustManager(InsecureTrustManagerFactory.INSTANCE) // åªæ˜¯æ¢æµ‹è¡Œä¸ºï¼Œä¸éœ€è¦æ ¡éªŒè¯ä¹¦é“¾
                 .build()
 
             val bootstrap = Bootstrap()
@@ -73,8 +69,8 @@ class FallbackHandshakeRecordModel(
                             ch.close()
                         }
 
-                        // recorder ±ØĞë·ÅÔÚ sslHandler Ö®Ç°£¨¸ü¿¿½ü socket£©£¬
-                        // ÕâÑùËüÄÃµ½µÄÊÇ¼Ó/½âÃÜÖ®Ç°µÄÔ­Ê¼ record ×Ö½Ú¡£
+                        // recorder å¿…é¡»æ”¾åœ¨ sslHandler ä¹‹å‰ï¼ˆæ›´é è¿‘ socketï¼‰ï¼Œ
+                        // è¿™æ ·å®ƒæ‹¿åˆ°çš„æ˜¯åŠ /è§£å¯†ä¹‹å‰çš„åŸå§‹ record å­—èŠ‚ã€‚
                         ch.pipeline()
                             .addLast(recorder)
                             .addLast(sslHandler)
@@ -94,7 +90,7 @@ class FallbackHandshakeRecordModel(
     private fun isDnsName(host: String): Boolean =
         host.isNotBlank() && host.any { it.isLetter() }
 
-    /** Ö»¶Á¡¢²»Ïû·Ñ¡¢²»ĞŞ¸ÄÊı¾İ£¬Ô­ÑùÍ¸´«¸øÏÂÒ»¸ö handler */
+    /** åªè¯»ã€ä¸æ¶ˆè´¹ã€ä¸ä¿®æ”¹æ•°æ®ï¼ŒåŸæ ·é€ä¼ ç»™ä¸‹ä¸€ä¸ª handler */
     private class RecordSniffingHandler : ChannelDuplexHandler() {
 
         val applicationDataRecordLengths = mutableListOf<Int>()
@@ -102,10 +98,10 @@ class FallbackHandshakeRecordModel(
         @Volatile
         private var capturingDone = false
 
-        // ¿ç¶à´Î channelRead Æ´½Ó²»ÍêÕûµÄ 5 ×Ö½Ú record header
+        // è·¨å¤šæ¬¡ channelRead æ‹¼æ¥ä¸å®Œæ•´çš„ 5 å­—èŠ‚ record header
         private var headerCarry = ByteArray(0)
 
-        // µ±Ç° record body »¹Ê£¶àÉÙ×Ö½ÚÃ»Ìø¹ı£¨¿ç°üÊ±ÓÃ£©
+        // å½“å‰ record body è¿˜å‰©å¤šå°‘å­—èŠ‚æ²¡è·³è¿‡ï¼ˆè·¨åŒ…æ—¶ç”¨ï¼‰
         private var remainingBodyBytes = 0
 
         override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {

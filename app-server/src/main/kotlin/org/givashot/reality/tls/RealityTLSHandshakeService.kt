@@ -3,7 +3,6 @@ package org.givashot.reality.tls
 import io.netty.buffer.Unpooled
 import io.netty.channel.Channel
 import io.netty.util.AttributeKey
-import org.givashot.reality.manager.connection.TlsHandshakeService
 import org.givashot.tls.*
 
 class RealityTLSHandshakeService(

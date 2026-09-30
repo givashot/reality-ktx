@@ -5,6 +5,7 @@ import io.netty.channel.Channel
 import io.netty.channel.ChannelInitializer
 import io.netty.channel.MultiThreadIoEventLoopGroup
 import io.netty.channel.nio.NioIoHandler
+import io.netty.channel.socket.SocketChannel
 import io.netty.channel.socket.nio.NioServerSocketChannel
 import io.netty.handler.timeout.ReadTimeoutHandler
 import org.givashot.reality.authentication.AuthenticationHandler
@@ -33,8 +34,8 @@ fun main() {
         val server: Channel = ServerBootstrap()
             .group(boss, workers)
             .channel(NioServerSocketChannel::class.java)
-            .childHandler(object : ChannelInitializer<io.netty.channel.socket.SocketChannel>() {
-                override fun initChannel(ch: io.netty.channel.socket.SocketChannel) {
+            .childHandler(object : ChannelInitializer<SocketChannel>() {
+                override fun initChannel(ch: SocketChannel) {
                     ch.pipeline().addLast(ReadTimeoutHandler(10))
                     ch.pipeline().addLast(AuthenticationHandler(authenticator, connectionManager, fallbackService))
                 }
