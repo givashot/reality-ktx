@@ -4,6 +4,9 @@ import io.netty.buffer.Unpooled
 import io.netty.channel.Channel
 import io.netty.util.AttributeKey
 import org.givashot.tls.*
+import org.givashot.tls.entity.ClientHelloWrapper
+import java.util.logging.Level
+import java.util.logging.Logger
 
 class RealityTLSHandshakeService(
     private val handshakeRecordProfile: HandshakeRecordProfile
@@ -72,6 +75,7 @@ class RealityTLSHandshakeService(
                 serverFlightSequenceNumber,
             )
         }.getOrElse {
+            logger.log(Level.WARNING, "Closing connection: fallback record profile cannot contain server flight", it)
             channel.close()
             return
         }
@@ -89,6 +93,7 @@ class RealityTLSHandshakeService(
     }
 
     companion object {
+        private val logger = Logger.getLogger(RealityTLSHandshakeService::class.java.name)
         val TLS_STATE_KEY: AttributeKey<TlsConnectionState> =
             AttributeKey.valueOf("reality.tls.state")
     }

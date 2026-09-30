@@ -3,7 +3,7 @@ package org.givashot.reality.manager.connection
 import io.netty.channel.Channel
 import org.givashot.reality.authentication.AuthResult
 import org.givashot.reality.tls.TlsHandshakeService
-import org.givashot.tls.ClientHelloWrapper
+import org.givashot.tls.entity.ClientHelloWrapper
 
 class ConnectionManager(
     private val tlsHandshakeService: TlsHandshakeService,

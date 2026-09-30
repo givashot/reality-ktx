@@ -1,5 +1,6 @@
 package org.givashot.tls
 
+import org.givashot.tls.entity.ServerCertificateCredentials
 import java.io.ByteArrayOutputStream
 import java.security.Signature
 

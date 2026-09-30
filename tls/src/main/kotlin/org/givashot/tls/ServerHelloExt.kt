@@ -1,6 +1,9 @@
 package org.givashot.tls
 
 import org.bouncycastle.tls.*
+import org.givashot.tls.entity.CipherSuite
+import org.givashot.tls.entity.ClientHelloWrapper
+import org.givashot.tls.entity.ServerHelloWrapper
 import java.io.ByteArrayOutputStream
 import java.util.*
 import org.bouncycastle.tls.CipherSuite as BCTLSCipherSuite
@@ -40,7 +43,7 @@ fun buildServerHello(
             serverPublicKey
         )
     )
-    // 5. REALITY：ServerHello.session_id = ClientHello.session_id
+    // 5.copy session id from client hello
     val sessionId = clientHello.base.sessionID
     // ------------------------------------------------------------
     // 6. 构造标准 TLS ServerHello

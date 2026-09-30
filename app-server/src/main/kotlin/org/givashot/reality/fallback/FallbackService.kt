@@ -9,6 +9,8 @@ import io.netty.util.ReferenceCountUtil
 import org.givashot.reality.config.RealityConfig
 import java.net.InetSocketAddress
 import java.util.*
+import java.util.logging.Level
+import java.util.logging.Logger
 
 class FallbackService(
     private val fallbackDest: RealityConfig.FallbackDest,
@@ -48,7 +50,7 @@ class FallbackHandler internal constructor(
             .connect(InetSocketAddress(fallbackDest.host, fallbackDest.port))
             .addListener { future ->
                 if (!future.isSuccess) {
-                    bridge.failed()
+                    bridge.failed("could not connect to fallback ${fallbackDest.host}:${fallbackDest.port}", future.cause())
                 }
             }
     }
@@ -68,8 +70,13 @@ class FallbackHandler internal constructor(
     }
 
     override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
-        bridge?.failed()
+        bridge?.failed("fallback client channel failed", cause)
+            ?: logger.log(Level.WARNING, "Fallback client channel failed", cause)
         ctx.close()
+    }
+
+    companion object {
+        private val logger = Logger.getLogger(FallbackHandler::class.java.name)
     }
 }
 
@@ -105,8 +112,10 @@ internal class FallbackBridge(
         client.config().isAutoRead = true
     }
 
-    fun failed() {
+    fun failed(reason: String, cause: Throwable? = null) {
         releasePending()
+        if (cause == null) logger.warning("Closing fallback connection: $reason")
+        else logger.log(Level.WARNING, "Closing fallback connection: $reason", cause)
         if (client.isActive) client.close()
     }
 
@@ -124,6 +133,10 @@ internal class FallbackBridge(
         while (pending.isNotEmpty()) {
             pending.removeFirst().release()
         }
+    }
+
+    companion object {
+        private val logger = Logger.getLogger(FallbackBridge::class.java.name)
     }
 }
 
@@ -148,7 +161,7 @@ private class PeerToClientHandler(
     }
 
     override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
-        bridge.peerClosed()
+        bridge.failed("fallback peer channel failed", cause)
         ctx.close()
     }
 }

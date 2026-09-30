@@ -1,5 +1,6 @@
 package org.givashot.tls
 
+import org.givashot.tls.entity.CipherSuite
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import javax.crypto.Cipher

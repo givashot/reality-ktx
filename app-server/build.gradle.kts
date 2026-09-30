@@ -18,10 +18,11 @@ dependencies {
     // Source: https://mvnrepository.com/artifact/org.bouncycastle/bctls-jdk18on
     implementation(libs.bctls)
     implementation(libs.bcpkix)
+    testImplementation(kotlin("test"))
 }
 
 application {
     // Define the Fully Qualified Name for the application main class
     // (Note that Kotlin compiles `App.kt` to a class with FQN `com.example.app.AppKt`.)
-    mainClass = "org.givashot.app.AppServer"
+    mainClass = "org.givashot.reality.AppServer"
 }

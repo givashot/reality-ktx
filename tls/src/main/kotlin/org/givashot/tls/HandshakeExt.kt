@@ -1,5 +1,9 @@
 package org.givashot.tls
 
+import org.givashot.tls.entity.CipherSuite
+import org.givashot.tls.entity.ClientHelloWrapper
+import org.givashot.tls.entity.HandshakeSecrets
+import org.givashot.tls.entity.ServerHelloWrapper
 import java.security.MessageDigest
 
 /**
@@ -177,20 +181,30 @@ fun verifyAndDecryptClientFinished(
 ): ByteArray? {
     return runCatching {
         val message = decryptHandshakeRecord(encryptedRecord, secrets, sequenceNumber)
-        require(message.size >= 4 && message[0].toInt() and 0xFF == 20)
-        val length = ((message[1].toInt() and 0xFF) shl 16) or
-                ((message[2].toInt() and 0xFF) shl 8) or
-                (message[3].toInt() and 0xFF)
-        require(length == message.size - 4)
-        val finishedKey = hkdfExpandLabel(
-            secrets.clientHandshakeTrafficSecret,
-            "finished",
-            ByteArray(0),
-            secrets.cipherSuite.hashLength,
-            secrets.cipherSuite,
-        )
-        val expected = hmac(finishedKey, expectedTranscriptHash, secrets.cipherSuite)
-        require(MessageDigest.isEqual(expected, message.copyOfRange(4, message.size)))
+        require(verifyClientFinishedMessage(message, secrets, expectedTranscriptHash))
         message
     }.getOrNull()
 }
+
+/** Verifies a complete Client Finished handshake message after its TLS records are reassembled. */
+fun verifyClientFinishedMessage(
+    message: ByteArray,
+    secrets: HandshakeSecrets,
+    expectedTranscriptHash: ByteArray,
+): Boolean = runCatching {
+    require(message.size >= 4 && (message[0].toInt() and 0xFF) == 20)
+    val length = ((message[1].toInt() and 0xFF) shl 16) or
+        ((message[2].toInt() and 0xFF) shl 8) or
+        (message[3].toInt() and 0xFF)
+    require(length == message.size - 4)
+    require(length == secrets.cipherSuite.hashLength)
+    val finishedKey = hkdfExpandLabel(
+        secrets.clientHandshakeTrafficSecret,
+        "finished",
+        ByteArray(0),
+        secrets.cipherSuite.hashLength,
+        secrets.cipherSuite,
+    )
+    val expected = hmac(finishedKey, expectedTranscriptHash, secrets.cipherSuite)
+    MessageDigest.isEqual(expected, message.copyOfRange(4, message.size))
+}.getOrDefault(false)

@@ -3,8 +3,8 @@ package org.givashot.reality.authentication
 import org.givashot.reality.config.RealityConfig
 import org.givashot.reality.ext.toHexByteArrayPadded
 import org.givashot.reality.tls.ByteArrayKey
-import org.givashot.tls.ClientHelloWrapper
 import org.givashot.reality.tls.RealityCrypto
+import org.givashot.tls.entity.ClientHelloWrapper
 import org.givashot.tls.calcSharedSecret
 import org.givashot.tls.x25519PrivateKeyFromBase64
 import java.nio.ByteBuffer
@@ -36,6 +36,7 @@ class Authenticator(
     fun doAuth(clientHelloWrapper: ClientHelloWrapper): AuthResult {
         var authFailed = true
         var authKey: ByteArray? = null
+        var failedReason: String? = null
         try {
             val sni = clientHelloWrapper.sni ?: throw Exception("sni is missing")
             if (sni in acceptableSnis) {
@@ -55,14 +56,18 @@ class Authenticator(
                     ) {
                         // auth success
                         authFailed = false
+                    } else {
+                        failedReason = "short ${shortId.contentToString()} not in expectedShortIds"
                     }
+                } else {
+                    failedReason = "timestamp exceeds the allowed skew range"
                 }
             }
         } catch (e: Throwable) {
-            println("auth failed, e.msg = ${e.message}")
+            failedReason = e.message
         }
         return if (authFailed) {
-            AuthResult.Failure()
+            AuthResult.Failure(failedReason)
         } else {
             AuthResult.Success(authKey!!)
         }

@@ -10,6 +10,7 @@ import io.netty.handler.ssl.util.InsecureTrustManagerFactory
 import org.givashot.reality.config.RealityConfig
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import javax.net.ssl.SNIHostName
 
 data class HandshakeRecordProfile(
@@ -39,7 +40,6 @@ class FallbackHandshakeRecordModel(
     fun learn(): HandshakeRecordProfile {
         val host = fallbackDest.host
         val port = fallbackDest.port
-        try {
             val resultFuture = CompletableFuture<HandshakeRecordProfile>()
             val sslContext = SslContextBuilder.forClient()
                 .trustManager(InsecureTrustManagerFactory.INSTANCE) // 只是探测行为，不需要校验证书链
@@ -77,14 +77,21 @@ class FallbackHandshakeRecordModel(
                     }
                 })
 
-            bootstrap.connect(host, port).addListener { future ->
+            val connectFuture = bootstrap.connect(host, port)
+            connectFuture.addListener { future ->
                 if (!future.isSuccess) resultFuture.completeExceptionally(future.cause())
             }
 
-            return resultFuture.get(10, TimeUnit.SECONDS)
-        } finally {
-            group.shutdownGracefully()
-        }
+            return try {
+                resultFuture.get(10, TimeUnit.SECONDS)
+            } catch (timeout: TimeoutException) {
+                connectFuture.channel().close()
+                throw timeout
+            } catch (interrupted: InterruptedException) {
+                connectFuture.channel().close()
+                Thread.currentThread().interrupt()
+                throw interrupted
+            }
     }
 
     private fun isDnsName(host: String): Boolean =

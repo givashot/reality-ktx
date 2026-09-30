@@ -1,4 +1,4 @@
-package org.givashot.tls
+package org.givashot.tls.entity
 
 import org.bouncycastle.tls.ServerHello
 import java.security.PrivateKey

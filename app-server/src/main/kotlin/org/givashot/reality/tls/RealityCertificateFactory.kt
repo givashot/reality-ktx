@@ -7,7 +7,7 @@ import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
-import org.givashot.tls.ServerCertificateCredentials
+import org.givashot.tls.entity.ServerCertificateCredentials
 import org.givashot.tls.globalSecureRandom
 import java.math.BigInteger
 import java.security.KeyPairGenerator

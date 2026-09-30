@@ -1,5 +1,7 @@
 package org.givashot.tls
 
+import org.givashot.tls.entity.HandshakeSecrets
+
 /**
  * Derive application secrets
  *

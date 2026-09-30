@@ -1,7 +1,7 @@
 package org.givashot.reality.tls
 
 import io.netty.channel.Channel
-import org.givashot.tls.ClientHelloWrapper
+import org.givashot.tls.entity.ClientHelloWrapper
 
 fun interface TlsHandshakeService {
 

@@ -1,11 +1,8 @@
-package org.givashot.tls
+package org.givashot.tls.entity
 
 import org.bouncycastle.tls.*
 import java.nio.charset.Charset
 import java.util.*
-
-const val BODY_OFFSET_BASE_HANDSHAKE = 4
-const val BODY_OFFSET_BASE_TLS_RECORD = 9
 
 data class ClientHelloWrapper(
     val base: ClientHello,
