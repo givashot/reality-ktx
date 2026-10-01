@@ -5,7 +5,7 @@ import io.netty.channel.ChannelHandlerContext
 import io.netty.handler.codec.ByteToMessageDecoder
 import io.netty.handler.timeout.ReadTimeoutException
 import io.netty.handler.timeout.ReadTimeoutHandler
-import org.givashot.reality.fallback.FallbackService
+import org.givashot.reality.fallback.FallbackHandlerFactory
 import org.givashot.reality.manager.connection.ConnectionHandler
 import org.givashot.reality.manager.connection.ConnectionManager
 import org.givashot.reality.tls.ClientHelloDecoder
@@ -17,7 +17,7 @@ import java.util.logging.Logger
 class AuthenticationHandler(
     private val authenticator: Authenticator,
     private val connectionManager: ConnectionManager,
-    private val fallbackService: FallbackService,
+    private val fallbackHandlerFactory: FallbackHandlerFactory,
 ) : ByteToMessageDecoder() {
 
     private val clientHelloDecoder = ClientHelloDecoder()
@@ -28,7 +28,7 @@ class AuthenticationHandler(
         when (val result = clientHelloDecoder.decode(ctx, input)) {
             ClientHelloDecoder.Result.NeedMore -> return
             is ClientHelloDecoder.Result.Fallback -> switchToFallback(ctx, result.reason)
-            is ClientHelloDecoder.Result.Complete ->{
+            is ClientHelloDecoder.Result.Complete -> {
                 when (val auth = authenticator.doAuth(result.hello)) {
                     is AuthResult.Success -> switchTo(
                         ctx,
@@ -36,7 +36,7 @@ class AuthenticationHandler(
                         replayHello = false,
                     )
 
-                    is AuthResult.Failure -> switchToFallback(ctx, "ClientHello authentication failed")
+                    is AuthResult.Failure -> switchToFallback(ctx, auth.reason.toString())
                 }
             }
         }
@@ -45,7 +45,7 @@ class AuthenticationHandler(
     private fun switchToFallback(ctx: ChannelHandlerContext, reason: String) {
         logger.fine("Switching connection to fallback: $reason")
         val initialBytes = clientHelloDecoder.takeHelloRecords(ctx)
-        switchTo(ctx, fallbackService.newForwardHandler(initialBytes), replayHello = true)
+        switchTo(ctx, fallbackHandlerFactory.newForwardHandler(initialBytes), replayHello = true)
     }
 
     override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {

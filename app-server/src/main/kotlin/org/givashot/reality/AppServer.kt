@@ -11,7 +11,7 @@ import io.netty.handler.timeout.ReadTimeoutHandler
 import org.givashot.reality.authentication.AuthenticationHandler
 import org.givashot.reality.authentication.Authenticator
 import org.givashot.reality.config.loadAppConfig
-import org.givashot.reality.fallback.FallbackService
+import org.givashot.reality.fallback.FallbackHandlerFactory
 import org.givashot.reality.manager.connection.ConnectionManager
 import org.givashot.reality.tls.FallbackHandshakeRecordModel
 import org.givashot.reality.tls.RealityTLSHandshakeService
@@ -28,7 +28,7 @@ fun main() {
         val connectionManager = ConnectionManager(
             tlsHandshakeService = RealityTLSHandshakeService(handshakeRecordProfile),
         )
-        val fallbackService = FallbackService(
+        val fallbackHandlerFactory = FallbackHandlerFactory(
             fallbackDest = config.server.reality.fallbackDest
         )
         val server: Channel = ServerBootstrap()
@@ -37,7 +37,7 @@ fun main() {
             .childHandler(object : ChannelInitializer<SocketChannel>() {
                 override fun initChannel(ch: SocketChannel) {
                     ch.pipeline().addLast(ReadTimeoutHandler(10))
-                    ch.pipeline().addLast(AuthenticationHandler(authenticator, connectionManager, fallbackService))
+                    ch.pipeline().addLast(AuthenticationHandler(authenticator, connectionManager, fallbackHandlerFactory))
                 }
             })
             .bind(config.server.port)
