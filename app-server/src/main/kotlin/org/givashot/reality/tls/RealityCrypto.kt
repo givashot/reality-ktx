@@ -1,6 +1,6 @@
 package org.givashot.reality.tls
 
-import org.givashot.tls.entity.ClientHelloWrapper
+import org.givashot.tls.entity.handshake.ClientHelloWrapper
 import javax.crypto.Cipher
 import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec

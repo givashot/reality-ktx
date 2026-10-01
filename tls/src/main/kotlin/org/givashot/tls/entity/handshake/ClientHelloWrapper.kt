@@ -1,4 +1,4 @@
-package org.givashot.tls.entity
+package org.givashot.tls.entity.handshake
 
 import org.bouncycastle.tls.*
 import java.nio.charset.Charset

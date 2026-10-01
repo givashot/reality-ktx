@@ -1,6 +1,8 @@
 package org.givashot.tls
 
-import org.givashot.tls.entity.HandshakeSecrets
+import org.givashot.tls.constant.TLS_APPLICATION_DATA_CONTENT_TYPE
+import org.givashot.tls.entity.ApplicationSecrets
+import org.givashot.tls.entity.handshake.HandshakeSecrets
 
 /**
  * Derive application secrets
@@ -54,7 +56,7 @@ fun encryptApplicationData(
     sequenceNumber: Long
 ): ByteArray {
     return encryptTlsRecord(
-        contentType = 23,
+        contentType = TLS_APPLICATION_DATA_CONTENT_TYPE,
         plaintext = plaintext,
         writeKey = appSecrets.serverWriteKey,
         writeIv = appSecrets.serverWriteIv,
@@ -83,6 +85,6 @@ fun decryptApplicationData(
         sequenceNumber,
         appSecrets.cipherSuite,
     )
-    require(decrypted.contentType == 23) { "Expected application data record" }
+    require(decrypted.contentType == TLS_APPLICATION_DATA_CONTENT_TYPE) { "Expected application data record" }
     return decrypted.payload
 }

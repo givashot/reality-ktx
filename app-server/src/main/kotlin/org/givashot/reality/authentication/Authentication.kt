@@ -4,7 +4,7 @@ import org.givashot.reality.config.RealityConfig
 import org.givashot.reality.ext.toHexByteArrayPadded
 import org.givashot.reality.tls.ByteArrayKey
 import org.givashot.reality.tls.RealityCrypto
-import org.givashot.tls.entity.ClientHelloWrapper
+import org.givashot.tls.entity.handshake.ClientHelloWrapper
 import org.givashot.tls.calcSharedSecret
 import org.givashot.tls.x25519PrivateKeyFromBase64
 import java.nio.ByteBuffer

@@ -1,9 +1,9 @@
 package org.givashot.reality.tls
 
-import org.givashot.tls.ApplicationSecrets
-import org.givashot.tls.entity.ClientHelloWrapper
-import org.givashot.tls.entity.HandshakeSecrets
-import org.givashot.tls.entity.ServerHelloWrapper
+import org.givashot.tls.entity.ApplicationSecrets
+import org.givashot.tls.entity.handshake.ClientHelloWrapper
+import org.givashot.tls.entity.handshake.HandshakeSecrets
+import org.givashot.tls.entity.handshake.ServerHelloWrapper
 
 enum class TlsHandshakePhase {
     SERVER_HELLO_SENT,

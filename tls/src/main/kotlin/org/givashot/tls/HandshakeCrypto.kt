@@ -1,9 +1,11 @@
 package org.givashot.tls
 
-import org.givashot.tls.entity.CipherSuite
-import org.givashot.tls.entity.ClientHelloWrapper
-import org.givashot.tls.entity.HandshakeSecrets
-import org.givashot.tls.entity.ServerHelloWrapper
+import org.givashot.tls.constant.TLS_HANDSHAKE_CONTENT_TYPE
+import org.givashot.tls.constant.TLS_HANDSHAKE_FINISH_CONTENT_TYPE
+import org.givashot.tls.entity.handshake.CipherSuite
+import org.givashot.tls.entity.handshake.ClientHelloWrapper
+import org.givashot.tls.entity.handshake.HandshakeSecrets
+import org.givashot.tls.entity.handshake.ServerHelloWrapper
 import java.security.MessageDigest
 
 /**
@@ -73,90 +75,6 @@ fun deriveHandshakeSecrets(
     )
 }
 
-///**
-// * Encrypt handshake messages
-// *
-// * @param messages // 每条完整 Handshake 消息（含 type + length
-// * @param secrets
-// * @param sequenceNumber the sequence number
-// * @return the byte arrays, 每个元素是完整的 TLSCiphertext record
-// */
-//fun encryptHandshakeMessages(
-//    messages: List<ByteArray>,
-//    secrets: HandshakeSecrets,
-//    sequenceNumber: Long = 0L
-//): List<ByteArray> {
-//
-//}
-
-/**
- * Encrypt server flight according to the observed TLS record profile.
- *
- * The handshake messages are split as one continuous byte stream. A handshake
- * message may therefore span multiple records, while padding is kept outside
- * the transcript by the TLS record layer.
- */
-fun encryptServerFlight(
-    encryptedExtensions: ByteArray,
-    certificate: ByteArray,
-    certificateVerify: ByteArray,
-    finished: ByteArray,
-    secrets: HandshakeSecrets,
-    recordLengths: List<Int>,
-    sequenceNumber: Long = 0,
-): List<ByteArray> {
-    val flight = encryptedExtensions + certificate + certificateVerify + finished
-    require(recordLengths.isNotEmpty()) { "TLS handshake record profile is empty" }
-
-    var offset = 0
-    return recordLengths.mapIndexed { index, targetLength ->
-        require(targetLength in 17..0xFFFF) {
-            "Invalid TLS handshake record length: $targetLength"
-        }
-        require(sequenceNumber <= Long.MAX_VALUE - index) {
-            "TLS handshake sequence number overflow"
-        }
-
-        val plaintextCapacity = targetLength - 17
-        val plaintextLength = minOf(plaintextCapacity, flight.size - offset)
-        val paddingLength = plaintextCapacity - plaintextLength
-        val plaintext = flight.copyOfRange(offset, offset + plaintextLength)
-        offset += plaintextLength
-
-        encryptTlsRecord(
-            contentType = 22,
-            plaintext = plaintext,
-            writeKey = secrets.serverWriteKey,
-            writeIv = secrets.serverWriteIv,
-            sequenceNumber = sequenceNumber + index,
-            cipherSuite = secrets.cipherSuite,
-            paddingLength = paddingLength,
-        )
-    }.also {
-        require(offset == flight.size) {
-            "TLS handshake record profile cannot contain the server flight"
-        }
-    }
-}
-
-fun buildFinishedMessage(
-    trafficSecret: ByteArray,
-    transcriptHash: ByteArray,
-    cipherSuite: CipherSuite,
-): ByteArray {
-    val finishedKey = hkdfExpandLabel(
-        trafficSecret,
-        "finished",
-        ByteArray(0),
-        cipherSuite.hashLength,
-        cipherSuite,
-    )
-    return tlsHandshakeMessage(
-        type = 20,
-        body = hmac(finishedKey, transcriptHash, cipherSuite),
-    )
-}
-
 fun decryptHandshakeRecord(
     encryptedRecord: ByteArray,
     secrets: HandshakeSecrets,
@@ -169,30 +87,20 @@ fun decryptHandshakeRecord(
         sequenceNumber,
         secrets.cipherSuite,
     )
-    require(decrypted.contentType == 22) { "Expected encrypted handshake record" }
+    require(decrypted.contentType == TLS_HANDSHAKE_CONTENT_TYPE) { "Expected encrypted handshake record" }
     return decrypted.payload
 }
 
-fun verifyAndDecryptClientFinished(
-    encryptedRecord: ByteArray,
-    secrets: HandshakeSecrets,
-    expectedTranscriptHash: ByteArray,
-    sequenceNumber: Long,
-): ByteArray? {
-    return runCatching {
-        val message = decryptHandshakeRecord(encryptedRecord, secrets, sequenceNumber)
-        require(verifyClientFinishedMessage(message, secrets, expectedTranscriptHash))
-        message
-    }.getOrNull()
-}
 
-/** Verifies a complete Client Finished handshake message after its TLS records are reassembled. */
+/**
+ *  Verifies a complete Client Finished handshake message after its TLS records are reassembled.
+ */
 fun verifyClientFinishedMessage(
     message: ByteArray,
     secrets: HandshakeSecrets,
     expectedTranscriptHash: ByteArray,
 ): Boolean = runCatching {
-    require(message.size >= 4 && (message[0].toInt() and 0xFF) == 20)
+    require(message.size >= 4 && (message[0].toInt() and 0xFF) == TLS_HANDSHAKE_FINISH_CONTENT_TYPE)
     val length = ((message[1].toInt() and 0xFF) shl 16) or
         ((message[2].toInt() and 0xFF) shl 8) or
         (message[3].toInt() and 0xFF)

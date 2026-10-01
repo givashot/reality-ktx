@@ -1,18 +1,4 @@
-package org.givashot.tls.entity
-
-import org.bouncycastle.tls.ServerHello
-import java.security.PrivateKey
-
-data class ServerHelloWrapper(
-    val base: ServerHello,
-    val sharedSecret: ByteArray,
-    // 这个必须保存下来，后面 ECDH 还要用
-    val serverEphemeralPrivateKey: ByteArray,
-    // ServerHello.key_share 里面发给客户端的 32 bytes
-    val serverEphemeralPublicKey: ByteArray,
-    // 实际选择的 TLS 1.3 cipher suite
-    val cipherSuite: CipherSuite
-)
+package org.givashot.tls.entity.handshake
 
 data class CipherSuite(
     val id: Int,                    // e.g. 0x1301 = TLS_AES_128_GCM_SHA256
@@ -42,23 +28,3 @@ data class CipherSuite(
         }
     }
 }
-
-data class HandshakeSecrets(
-    val handshakeSecret: ByteArray,
-    val serverHandshakeTrafficSecret: ByteArray,
-    val clientHandshakeTrafficSecret: ByteArray,
-    val serverWriteKey: ByteArray,
-    val serverWriteIv: ByteArray,
-    val clientWriteKey: ByteArray,
-    val clientWriteIv: ByteArray,
-    val transcriptHash: ByteArray,   // ClientHello ... ServerHello 的 hash
-    val cipherSuite: CipherSuite,
-    val masterSecret: ByteArray
-)
-
-data class ServerCertificateCredentials(
-    val certificateChain: List<ByteArray>,
-    val privateKey: PrivateKey,
-    val signatureScheme: Int,
-    val jcaSignatureAlgorithm: String,
-)

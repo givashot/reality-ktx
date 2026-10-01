@@ -8,6 +8,9 @@ import io.netty.channel.socket.nio.NioSocketChannel
 import io.netty.handler.ssl.SslContextBuilder
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory
 import org.givashot.reality.config.RealityConfig
+import org.givashot.tls.constant.TLS_APPLICATION_DATA_CONTENT_TYPE
+import org.givashot.tls.constant.TLS_HANDSHAKE_CONTENT_TYPE
+import org.givashot.tls.constant.TLS_RECORD_HEADER_LENGTH
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
@@ -17,10 +20,6 @@ data class HandshakeRecordProfile(
     /** 按顺序排列：EncryptedExtensions, Certificate, CertificateVerify, Finished(, NewSessionTicket...) 每条 record 的密文长度 */
     val recordLengths: List<Int>,
 )
-
-private const val RECORD_HEADER_LEN = 5
-private const val CONTENT_TYPE_HANDSHAKE = 0x16
-private const val CONTENT_TYPE_APPLICATION_DATA = 0x17
 
 /**
  * 用 Netty 自带的 SslHandler 作为一个真实 TLS 客户端连接 fallback dest，
@@ -128,11 +127,11 @@ class FallbackHandshakeRecordModel(
         private fun containsNonHandshakeRecord(buf: ByteBuf): Boolean {
             var idx = buf.readerIndex()
             val writerIndex = buf.writerIndex()
-            while (idx + RECORD_HEADER_LEN <= writerIndex) {
+            while (idx + TLS_RECORD_HEADER_LENGTH <= writerIndex) {
                 val type = buf.getUnsignedByte(idx).toInt()
-                if (type != CONTENT_TYPE_HANDSHAKE) return true
+                if (type != TLS_HANDSHAKE_CONTENT_TYPE) return true
                 val length = buf.getUnsignedShort(idx + 3)
-                idx += RECORD_HEADER_LEN + length
+                idx += TLS_RECORD_HEADER_LENGTH + length
             }
             return false
         }
@@ -150,7 +149,7 @@ class FallbackHandshakeRecordModel(
             while (remainingBodyBytes == 0) {
                 val availableForHeader = writerIndex - idx
                 val totalHeaderBytes = headerCarry.size + availableForHeader
-                if (totalHeaderBytes < RECORD_HEADER_LEN) {
+                if (totalHeaderBytes < TLS_RECORD_HEADER_LENGTH) {
                     val newCarry = ByteArray(totalHeaderBytes)
                     headerCarry.copyInto(newCarry)
                     buf.getBytes(idx, newCarry, headerCarry.size, availableForHeader)
@@ -158,16 +157,16 @@ class FallbackHandshakeRecordModel(
                     return
                 }
 
-                val header = ByteArray(RECORD_HEADER_LEN)
+                val header = ByteArray(TLS_RECORD_HEADER_LENGTH)
                 headerCarry.copyInto(header)
-                val bytesNeeded = RECORD_HEADER_LEN - headerCarry.size
+                val bytesNeeded = TLS_RECORD_HEADER_LENGTH - headerCarry.size
                 buf.getBytes(idx, header, headerCarry.size, bytesNeeded)
                 idx += bytesNeeded
                 headerCarry = ByteArray(0)
 
                 val type = header[0].toInt() and 0xFF
                 val length = ((header[3].toInt() and 0xFF) shl 8) or (header[4].toInt() and 0xFF)
-                if (type == CONTENT_TYPE_APPLICATION_DATA) {
+                if (type == TLS_APPLICATION_DATA_CONTENT_TYPE) {
                     applicationDataRecordLengths.add(length)
                 }
 

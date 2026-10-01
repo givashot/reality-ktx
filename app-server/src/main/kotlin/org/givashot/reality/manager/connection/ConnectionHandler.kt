@@ -8,15 +8,17 @@ import org.givashot.reality.authentication.AuthResult
 import org.givashot.reality.tls.RealityTLSHandshakeService
 import org.givashot.reality.tls.TlsConnectionState
 import org.givashot.reality.tls.TlsHandshakePhase
+import org.givashot.tls.constant.MAX_TLS_RECORD_SIZE
+import org.givashot.tls.constant.TLS_RECORD_HEADER_LENGTH
 import org.givashot.tls.decryptApplicationData
 import org.givashot.tls.decryptHandshakeRecord
 import org.givashot.tls.deriveApplicationSecrets
-import org.givashot.tls.entity.ClientHelloWrapper
+import org.givashot.tls.entity.handshake.ClientHelloWrapper
 import org.givashot.tls.verifyClientFinishedMessage
 import java.util.logging.Level
 import java.util.logging.Logger
 
-private const val TLS_RECORD_HEADER_LENGTH = 5
+
 
 /** Processes complete TLS records while retaining partial records in Netty's cumulation buffer. */
 class ConnectionHandler(
@@ -42,6 +44,11 @@ class ConnectionHandler(
                 return
             }
 
+            if (tlsRecordLength > MAX_TLS_RECORD_SIZE) {
+                close(ctx, "TLS record exceeds maximum size limit")
+                return
+            }
+
             val record = ByteArray(tlsRecordLength)
             input.readBytes(record)
             val state = ctx.channel().attr(RealityTLSHandshakeService.TLS_STATE_KEY).get()
@@ -51,7 +58,7 @@ class ConnectionHandler(
             }
 
             when (state.phase) {
-                TlsHandshakePhase.SERVER_FLIGHT_SENT -> processClientFinished(ctx, record, state)
+                TlsHandshakePhase.SERVER_FLIGHT_SENT -> processHandshakeRecord(ctx, record, state)
                 TlsHandshakePhase.APPLICATION_DATA -> processApplicationRecord(ctx, record, state)
                 else -> {
                     close(ctx, "unexpected TLS record while in ${state.phase}")
@@ -62,7 +69,7 @@ class ConnectionHandler(
         }
     }
 
-    private fun processClientFinished(
+    private fun processHandshakeRecord(
         ctx: ChannelHandlerContext,
         record: ByteArray,
         state: TlsConnectionState,
@@ -139,7 +146,8 @@ class ConnectionHandler(
     }
 }
 
-/** Bounded TLS handshake-message reassembly across independently encrypted records. */
+/**
+ * Bounded TLS handshake-message reassembly across independently encrypted records. */
 internal class ClientFinishedAccumulator {
     private val bytes = java.io.ByteArrayOutputStream()
     private var expectedLength: Int? = null

@@ -1,25 +1,28 @@
 package org.givashot.tls
 
 import org.bouncycastle.tls.*
-import org.givashot.tls.entity.CipherSuite
-import org.givashot.tls.entity.ClientHelloWrapper
-import org.givashot.tls.entity.ServerHelloWrapper
+import org.givashot.tls.constant.TLS_HANDSHAKE_SERVER_HELLO_CONTENT_TYPE
+import org.givashot.tls.entity.handshake.CipherSuite
+import org.givashot.tls.entity.handshake.ClientHelloWrapper
+import org.givashot.tls.entity.handshake.ServerHelloWrapper
 import java.io.ByteArrayOutputStream
 import java.util.*
 import org.bouncycastle.tls.CipherSuite as BCTLSCipherSuite
 
-fun buildServerHello(
+private val supportCipherSuites = intArrayOf(
+    BCTLSCipherSuite.TLS_AES_128_GCM_SHA256,
+    BCTLSCipherSuite.TLS_AES_256_GCM_SHA384,
+    BCTLSCipherSuite.TLS_CHACHA20_POLY1305_SHA256
+)
+
+fun newServerHello(
     clientHello: ClientHelloWrapper,
 ): ServerHelloWrapper {
     // 1. 从 ClientHello 选择 TLS 1.3 cipher suite
     val clientSuites = clientHello.base.cipherSuites
-    val preferred = intArrayOf(
-        BCTLSCipherSuite.TLS_AES_128_GCM_SHA256,
-        BCTLSCipherSuite.TLS_AES_256_GCM_SHA384,
-        BCTLSCipherSuite.TLS_CHACHA20_POLY1305_SHA256
-    )
-    val cipherSuiteType =
-        preferred.firstOrNull { it in clientSuites } ?: error("No mutually supported TLS 1.3 cipher suite")
+    // Select the client preferred cipher suite
+    val cipherSuiteType = clientSuites.firstOrNull { it in supportCipherSuites }
+        ?: error("No mutually supported TLS 1.3 cipher suite")
     val cipherSuite = CipherSuite.fromId(cipherSuiteType)
     // 2. 找 ClientHello 的 X25519 key_share
     val clientPublicKey = clientHello.clientPubKey ?: throw Exception("Client public key is missing")
@@ -64,12 +67,8 @@ fun buildServerHello(
     )
 }
 
-fun encodeTLSRecord(handshakeMessage: ByteArray): ByteArray {
-    return tlsRecord(22, handshakeMessage)
-}
-
 fun ServerHello.encodeHandshake(): ByteArray {
     val body = ByteArrayOutputStream()
     encode(null, body)
-    return tlsHandshakeMessage(2, body.toByteArray())
+    return tlsHandshakeMessage(TLS_HANDSHAKE_SERVER_HELLO_CONTENT_TYPE, body.toByteArray())
 }

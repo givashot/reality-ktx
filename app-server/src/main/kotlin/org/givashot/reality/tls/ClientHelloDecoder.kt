@@ -4,26 +4,19 @@ import io.netty.buffer.ByteBuf
 import io.netty.channel.ChannelHandlerContext
 import io.netty.util.ReferenceCountUtil
 import org.bouncycastle.tls.ClientHello
-import org.givashot.tls.entity.ClientHelloWrapper
+import org.givashot.tls.constant.*
+import org.givashot.tls.entity.handshake.ClientHelloWrapper
 import java.io.ByteArrayInputStream
 import java.util.logging.Level
 import java.util.logging.Logger
 
-private const val TLS_RECORD_HEADER_LENGTH = 5
-private const val TLS_HANDSHAKE_CONTENT_TYPE = 0x16
-private const val TLS_HANDSHAKE_HEADER_LENGTH = 4
-private const val TLS_HANDSHAKE_CLIENT_HELLO_CONTENT_TYPE = 1
-private const val MAX_CLIENT_HELLO_LENGTH = 64 * 1024
-private const val BODY_OFFSET_BASE_HANDSHAKE = 4
-
-
 /** Accumulates TLS records until a complete ClientHello can be parsed. */
-class ClientHelloDecoder() {
+class ClientHelloDecoder {
     private val helloRecords = ArrayList<ByteBuf>()
     private var handshakeBuffer: ByteBuf? = null
     private var expectedHandshakeLength: Int? = null
     private var capturedWireBytes = 0L
-    private val maxClientHelloWireBytes = MAX_CLIENT_HELLO_LENGTH.toLong() * 6 + TLS_RECORD_HEADER_LENGTH
+    private val maxClientHelloWireBytes = TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH.toLong() * 6 + TLS_RECORD_HEADER_LENGTH
 
     fun decode(ctx: ChannelHandlerContext, input: ByteBuf): Result {
         if (input.readableBytes() < TLS_RECORD_HEADER_LENGTH) return Result.NeedMore
@@ -35,10 +28,16 @@ class ClientHelloDecoder() {
             return Result.Fallback("input is not a TLS handshake record")
         }
         val tlsRecordLength = TLS_RECORD_HEADER_LENGTH + payloadLength
+
+        if (tlsRecordLength > MAX_TLS_RECORD_SIZE) {
+            return Result.Fallback("tls record length is too big")
+        }
+
         if (input.readableBytes() < tlsRecordLength) {
             // wait the full tls record data
             return Result.NeedMore
         }
+
         if (capturedWireBytes + tlsRecordLength > maxClientHelloWireBytes) {
             return Result.Fallback("ClientHello wire size exceeds configured limit")
         }
@@ -57,7 +56,7 @@ class ClientHelloDecoder() {
                 return Result.Fallback("first handshake message is not ClientHello")
             }
             val bodyLength = handshake.getUnsignedMedium(start + 1)
-            if (bodyLength > MAX_CLIENT_HELLO_LENGTH) {
+            if (bodyLength > TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH) {
                 return Result.Fallback("ClientHello exceeds configured limit")
             }
             expectedHandshakeLength = TLS_HANDSHAKE_HEADER_LENGTH + bodyLength
@@ -94,9 +93,9 @@ class ClientHelloDecoder() {
     }
 
     private fun parseClientHello(handshakeAndBody: ByteArray): ClientHelloWrapper {
-        require(handshakeAndBody.size >= BODY_OFFSET_BASE_HANDSHAKE + 35) { "ClientHello is truncated" }
-        val bodyOffset = BODY_OFFSET_BASE_HANDSHAKE
-        val sessionIdOffset = bodyOffset + 2 + 32 + 1
+        require(handshakeAndBody.size >= TLS_HANDSHAKE_HEADER_LENGTH + 35) { "ClientHello is truncated" }
+        val bodyOffset = TLS_HANDSHAKE_HEADER_LENGTH
+        val sessionIdOffset = TLS_HANDSHAKE_HEADER_LENGTH + 2 + 32 + 1
         val parsed = ClientHello.parse(
             ByteArrayInputStream(handshakeAndBody, bodyOffset, handshakeAndBody.size - bodyOffset),
             null,

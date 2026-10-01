@@ -4,7 +4,8 @@ import io.netty.buffer.Unpooled
 import io.netty.channel.Channel
 import io.netty.util.AttributeKey
 import org.givashot.tls.*
-import org.givashot.tls.entity.ClientHelloWrapper
+import org.givashot.tls.constant.TLS_HANDSHAKE_CONTENT_TYPE
+import org.givashot.tls.entity.handshake.ClientHelloWrapper
 import java.util.logging.Level
 import java.util.logging.Logger
 
@@ -20,7 +21,7 @@ class RealityTLSHandshakeService(
         val credentials = applyAuthKeySignature(
             authKey = authKey,
         )
-        val serverHello = buildServerHello(clientHelloWrapper)
+        val serverHello = newServerHello(clientHelloWrapper)
         val serverHelloHandshake = serverHello.base.encodeHandshake()
         val handshakeSecrets = deriveHandshakeSecrets(
             clientHello = clientHelloWrapper,
@@ -29,7 +30,7 @@ class RealityTLSHandshakeService(
             cipherSuite = serverHello.cipherSuite,
         )
         val state = TlsConnectionState(clientHelloWrapper, serverHello, handshakeSecrets, serverHelloHandshake)
-        val serverHelloRecord = encodeTLSRecord(serverHelloHandshake)
+        val serverHelloRecord = tlsRecord(TLS_HANDSHAKE_CONTENT_TYPE, serverHelloHandshake)
 
         val encryptedExtensions = encodeEncryptedExtensions(emptyMap())
         val certificate = encodeCertificate(credentials)
