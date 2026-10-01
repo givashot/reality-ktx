@@ -71,28 +71,13 @@ fun x25519PublicKeyFromBase64(value: String): ByteArray {
 }
 
 fun x25519PrivateKeyFromBase64(value: String): ByteArray {
-    // 1. 兼容 Base64 和 Base64URL 解码
+    // X25519 private keys are stored as 32-byte raw keys.
     val decoded = runCatching { Base64.getUrlDecoder().decode(value) }
         .getOrElse { Base64.getDecoder().decode(value) }
 
-    val rawPublicKeyBytes: ByteArray = when (decoded.size) {
-        // 情况 A：标准的 32 字节裸公钥（REALITY 配置中最常见）
-        32 -> decoded
-
-        // 情况 B：标准 X.509/SubjectPublicKeyInfo 编码格式（通常 44 字节）
-        // 使用 BouncyCastle 的 ASN.1 解析器零解析提取，不再需要手动拼接 Prefix
-        else -> {
-            val spki = SubjectPublicKeyInfo.getInstance(decoded)
-            // 提取出内部的 32 字节原始公钥
-            spki.publicKeyData.bytes
-        }
+    require(decoded.size == 32) {
+        "Invalid X25519 private key length: ${decoded.size}, expected 32 bytes"
     }
 
-    require(rawPublicKeyBytes.size == 32) {
-        "Invalid X25519 public key length: ${rawPublicKeyBytes.size}, expected 32 bytes"
-    }
-
-    // 2. 使用 BouncyCastle 的 X25519PublicKeyParameters 进行安全校验并导出
-    val publicKeyParams = X25519PrivateKeyParameters(rawPublicKeyBytes, 0)
-    return publicKeyParams.encoded
+    return X25519PrivateKeyParameters(decoded, 0).encoded
 }

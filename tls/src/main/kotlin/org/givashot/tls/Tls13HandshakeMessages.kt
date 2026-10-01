@@ -78,7 +78,7 @@ fun encryptServerFlight(
     var offset = 0
     return recordLengths.mapIndexed { index, targetLength ->
         val minPayloadLength = 1 + TLS_AEAD_TAG_LENGTH
-        require(targetLength in minPayloadLength..MAX_TLS_RECORD_SIZE - TLS_RECORD_HEADER_LENGTH) {
+        require(targetLength in minPayloadLength..TLS_MAX_RECORD_SIZE - TLS_RECORD_HEADER_LENGTH) {
             "Invalid TLS handshake record length: $targetLength"
         }
         require(sequenceNumber <= Long.MAX_VALUE - index) {

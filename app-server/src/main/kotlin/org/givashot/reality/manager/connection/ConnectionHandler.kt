@@ -8,7 +8,7 @@ import org.givashot.reality.authentication.AuthResult
 import org.givashot.reality.tls.RealityTLSHandshakeService
 import org.givashot.reality.tls.TlsConnectionState
 import org.givashot.reality.tls.TlsHandshakePhase
-import org.givashot.tls.constant.MAX_TLS_RECORD_SIZE
+import org.givashot.tls.constant.TLS_MAX_RECORD_SIZE
 import org.givashot.tls.constant.TLS_RECORD_HEADER_LENGTH
 import org.givashot.tls.decryptApplicationData
 import org.givashot.tls.decryptHandshakeRecord
@@ -44,7 +44,7 @@ class ConnectionHandler(
                 return
             }
 
-            if (tlsRecordLength > MAX_TLS_RECORD_SIZE) {
+            if (tlsRecordLength > TLS_MAX_RECORD_SIZE) {
                 close(ctx, "TLS record exceeds maximum size limit")
                 return
             }

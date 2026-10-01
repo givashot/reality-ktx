@@ -29,7 +29,7 @@ class ClientHelloDecoder {
         }
         val tlsRecordLength = TLS_RECORD_HEADER_LENGTH + payloadLength
 
-        if (tlsRecordLength > MAX_TLS_RECORD_SIZE) {
+        if (tlsRecordLength > TLS_MAX_RECORD_SIZE) {
             return Result.Fallback("tls record length is too big")
         }
 
