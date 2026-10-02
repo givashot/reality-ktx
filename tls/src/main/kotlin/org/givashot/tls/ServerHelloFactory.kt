@@ -15,7 +15,7 @@ private val supportCipherSuites = intArrayOf(
     BCTLSCipherSuite.TLS_CHACHA20_POLY1305_SHA256
 )
 
-fun newServerHello(
+internal fun newServerHello(
     clientHello: ClientHelloWrapper,
 ): ServerHelloWrapper {
     // 1. 从 ClientHello 选择 TLS 1.3 cipher suite
@@ -67,7 +67,7 @@ fun newServerHello(
     )
 }
 
-fun ServerHello.encodeHandshake(): ByteArray {
+internal fun ServerHello.encodeHandshake(): ByteArray {
     val body = ByteArrayOutputStream()
     encode(null, body)
     return tlsHandshakeMessage(TLS_HANDSHAKE_SERVER_HELLO_CONTENT_TYPE, body.toByteArray())

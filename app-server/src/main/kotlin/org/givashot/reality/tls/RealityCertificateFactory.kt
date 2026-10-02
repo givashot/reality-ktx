@@ -7,8 +7,8 @@ import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
-import org.givashot.tls.entity.handshake.ServerCertificateCredentials
 import org.givashot.tls.globalSecureRandom
+import org.givashot.tls.entity.handshake.CertificateData
 import java.math.BigInteger
 import java.security.KeyPairGenerator
 import java.security.PrivateKey
@@ -78,7 +78,7 @@ private val tmpCertKey: TempCertKey by lazy {
 
 fun applyAuthKeySignature(
     authKey: ByteArray,
-): ServerCertificateCredentials {
+): CertificateData {
     require(authKey.isNotEmpty()) { "AuthKey cannot be empty" }
 
     val cert = tmpCertKey.signedCert.copyOf()
@@ -89,7 +89,7 @@ fun applyAuthKeySignature(
 
     System.arraycopy(hmac, 0, cert, cert.size - ED25519_SIGNATURE_SIZE_BYTES, ED25519_SIGNATURE_SIZE_BYTES)
 
-    return ServerCertificateCredentials(
+    return CertificateData(
         certificateChain = listOf(cert),
         privateKey = tmpCertKey.privateKey,
         signatureScheme = SIGNATURE_SCHEME_ED25519,

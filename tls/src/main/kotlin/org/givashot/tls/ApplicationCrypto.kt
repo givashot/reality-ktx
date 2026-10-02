@@ -11,7 +11,7 @@ import org.givashot.tls.entity.handshake.HandshakeSecrets
  * @param transcriptHashAfterServerFinished hash of ClientHello through server Finished
  * @return the application secrets to encrypt or decrypt application level data
  */
-fun deriveApplicationSecrets(
+internal fun deriveApplicationSecrets(
     handshakeSecrets: HandshakeSecrets,
     transcriptHashAfterServerFinished: ByteArray,
 ): ApplicationSecrets {
@@ -43,43 +43,20 @@ fun deriveApplicationSecrets(
 }
 
 /**
- * Encrypt application data
+ * Decrypts one client application data record.
  *
- * @param plaintext
- * @param appSecrets the app secrets
- * @param sequenceNumber the sequence number
- * @return the byte array
+ * @param encodedRecord the encrypted TLS record
+ * @param appSecrets the traffic keys derived for this connection
+ * @param sequenceNumber the client application record sequence number
+ * @return the decrypted application payload
  */
-fun encryptApplicationData(
-    plaintext: ByteArray,
-    appSecrets: ApplicationSecrets,
-    sequenceNumber: Long
-): ByteArray {
-    return encryptTlsRecord(
-        contentType = TLS_APPLICATION_DATA_CONTENT_TYPE,
-        plaintext = plaintext,
-        writeKey = appSecrets.serverWriteKey,
-        writeIv = appSecrets.serverWriteIv,
-        sequenceNumber = sequenceNumber,
-        cipherSuite = appSecrets.cipherSuite,
-    )
-}
-
-/**
- * Decrypt application data
- *
- * @param plaintext
- * @param appSecrets the app secrets
- * @param sequenceNumber the sequence number
- * @return the byte array
- */
-fun decryptApplicationData(
-    plaintext: ByteArray,
+internal fun decryptApplicationData(
+    encodedRecord: ByteArray,
     appSecrets: ApplicationSecrets,
     sequenceNumber: Long
 ): ByteArray {
     val decrypted = decryptTlsRecord(
-        plaintext,
+        encodedRecord,
         appSecrets.clientWriteKey,
         appSecrets.clientWriteIv,
         sequenceNumber,

@@ -1,6 +1,6 @@
 package org.givashot.tls.entity.handshake
 
-data class CipherSuite(
+internal data class CipherSuite(
     val id: Int,                    // e.g. 0x1301 = TLS_AES_128_GCM_SHA256
     val hash: String,               // "SHA-256"
     val aead: String,               // "AES/GCM/NoPadding" or "ChaCha20-Poly1305"

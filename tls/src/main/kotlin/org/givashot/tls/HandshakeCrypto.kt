@@ -17,7 +17,7 @@ import java.security.MessageDigest
  * @param cipherSuite the cipher suite
  * @return the handshake secrets
  */
-fun deriveHandshakeSecrets(
+internal fun deriveHandshakeSecrets(
     clientHello: ClientHelloWrapper,
     serverHello: ServerHelloWrapper,
     sharedSecret: ByteArray,
@@ -75,7 +75,7 @@ fun deriveHandshakeSecrets(
     )
 }
 
-fun decryptHandshakeRecord(
+internal fun decryptHandshakeRecord(
     encryptedRecord: ByteArray,
     secrets: HandshakeSecrets,
     sequenceNumber: Long,
@@ -95,7 +95,7 @@ fun decryptHandshakeRecord(
 /**
  *  Verifies a complete Client Finished handshake message after its TLS records are reassembled.
  */
-fun verifyClientFinishedMessage(
+internal fun verifyClientFinishedMessage(
     message: ByteArray,
     secrets: HandshakeSecrets,
     expectedTranscriptHash: ByteArray,

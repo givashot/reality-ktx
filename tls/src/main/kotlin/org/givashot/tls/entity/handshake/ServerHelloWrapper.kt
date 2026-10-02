@@ -2,7 +2,7 @@ package org.givashot.tls.entity.handshake
 
 import org.bouncycastle.tls.ServerHello
 
-data class ServerHelloWrapper(
+internal data class ServerHelloWrapper(
     val base: ServerHello,
     val sharedSecret: ByteArray,
     // 这个必须保存下来，后面 ECDH 还要用

@@ -2,7 +2,7 @@ package org.givashot.tls.entity
 
 import org.givashot.tls.entity.handshake.CipherSuite
 
-data class ApplicationSecrets(
+internal data class ApplicationSecrets(
     val clientAppTrafficSecret: ByteArray,
     val serverAppTrafficSecret: ByteArray,
     val serverWriteKey: ByteArray,

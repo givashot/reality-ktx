@@ -18,9 +18,6 @@ internal data class DecryptedTlsRecord(
 internal fun digest(data: ByteArray, cipherSuite: CipherSuite): ByteArray =
     MessageDigest.getInstance(cipherSuite.hash).digest(data)
 
-fun tlsTranscriptHash(cipherSuite: CipherSuite, vararg messages: ByteArray): ByteArray =
-    digest(messages.fold(ByteArray(0)) { result, message -> result + message }, cipherSuite)
-
 internal fun hkdfExtract(salt: ByteArray, input: ByteArray, cipherSuite: CipherSuite): ByteArray =
     hmac(salt, input, cipherSuite)
 
@@ -84,7 +81,7 @@ internal fun tlsHandshakeMessage(type: Int, body: ByteArray): ByteArray {
     ) + body
 }
 
-fun tlsRecord(contentType: Int, payload: ByteArray): ByteArray {
+internal fun tlsRecord(contentType: Int, payload: ByteArray): ByteArray {
     require(contentType in 0..255 && payload.size <= 0xFFFF)
     return byteArrayOf(
         contentType.toByte(),

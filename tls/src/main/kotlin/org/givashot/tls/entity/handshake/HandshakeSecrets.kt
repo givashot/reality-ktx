@@ -1,6 +1,6 @@
 package org.givashot.tls.entity.handshake
 
-data class HandshakeSecrets(
+internal data class HandshakeSecrets(
     val handshakeSecret: ByteArray,
     val serverHandshakeTrafficSecret: ByteArray,
     val clientHandshakeTrafficSecret: ByteArray,
