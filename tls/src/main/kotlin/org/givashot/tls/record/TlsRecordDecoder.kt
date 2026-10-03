@@ -1,11 +1,14 @@
-package org.givashot.tls
+package org.givashot.tls.record
 
 import org.givashot.tls.constant.TLS_MAX_RECORD_SIZE
 import org.givashot.tls.constant.TLS_RECORD_HEADER_LENGTH
-import org.givashot.tls.entity.TlsRecordMessage
 
-internal class TlsRecordDecoder {
+internal class TlsRecordDecoder(private val maxRecordSize: Int = TLS_MAX_RECORD_SIZE) {
     private val buffered = ByteQueue()
+
+    init {
+        require(maxRecordSize > TLS_RECORD_HEADER_LENGTH)
+    }
 
     fun feed(bytes: ByteArray): List<TlsRecordMessage> {
         if (bytes.isEmpty()) return emptyList()
@@ -20,7 +23,7 @@ internal class TlsRecordDecoder {
             require(contentType in 20..23) { "Invalid TLS record content type: $contentType" }
             require(version ushr 8 == 3) { "Invalid TLS record legacy version: 0x${version.toString(16)}" }
             val recordLength = TLS_RECORD_HEADER_LENGTH + payloadLength
-            require(recordLength <= TLS_MAX_RECORD_SIZE) { "TLS record exceeds maximum size limit" }
+            require(recordLength <= maxRecordSize) { "TLS record exceeds maximum size limit" }
             if (buffered.size < recordLength) break
 
             val record = buffered.copyRange(0, recordLength)

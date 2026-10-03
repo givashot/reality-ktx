@@ -1,10 +1,10 @@
-package org.givashot.tls
+package org.givashot.tls.handshake
 
 import org.givashot.tls.constant.TLS_HANDSHAKE_HEADER_LENGTH
-import org.givashot.tls.entity.handshake.HandshakeMessage
+import org.givashot.tls.record.ByteQueue
 
 internal class HandshakeMessageDecoder(
-    private val maxMessageLength: Int = 1024 * 1024,
+    private val maxMessageLength: Int = 1024 * 64,
 ) {
     private val buffered = ByteQueue()
 

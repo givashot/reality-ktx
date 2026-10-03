@@ -1,4 +1,4 @@
-package org.givashot.tls.entity
+package org.givashot.tls.record
 
 internal data class TlsRecordMessage(
     val contentType: Int,

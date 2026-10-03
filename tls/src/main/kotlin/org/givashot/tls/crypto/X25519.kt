@@ -1,4 +1,4 @@
-package org.givashot.tls
+package org.givashot.tls.crypto
 
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo
 import org.bouncycastle.crypto.params.X25519PrivateKeyParameters

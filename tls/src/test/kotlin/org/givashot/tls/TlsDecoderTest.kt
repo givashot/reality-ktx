@@ -5,7 +5,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertContentEquals
 import org.givashot.tls.constant.TLS_HANDSHAKE_CONTENT_TYPE
-import org.givashot.tls.entity.handshake.HandshakeMessage
+import org.givashot.tls.crypto.tlsRecord
+import org.givashot.tls.handshake.HandshakeMessage
+import org.givashot.tls.handshake.HandshakeMessageDecoder
+import org.givashot.tls.record.TlsRecordDecoder
 
 class TlsDecoderTest {
     @Test

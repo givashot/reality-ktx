@@ -1,4 +1,4 @@
-package org.givashot.tls.entity.handshake
+package org.givashot.tls.handshake
 
 internal data class HandshakeMessage(
     val type: Int,

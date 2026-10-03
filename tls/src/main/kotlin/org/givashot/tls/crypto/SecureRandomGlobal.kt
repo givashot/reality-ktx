@@ -1,4 +1,4 @@
-package org.givashot.tls
+package org.givashot.tls.crypto
 
 import java.security.SecureRandom
 

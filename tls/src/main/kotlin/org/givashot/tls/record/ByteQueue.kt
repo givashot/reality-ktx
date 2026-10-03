@@ -1,4 +1,4 @@
-package org.givashot.tls
+package org.givashot.tls.record
 
 internal class ByteQueue(initialCapacity: Int = 256) {
     private var bytes = ByteArray(initialCapacity)

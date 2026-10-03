@@ -1,6 +1,6 @@
-package org.givashot.tls.entity
+package org.givashot.tls.crypto
 
-import org.givashot.tls.entity.handshake.CipherSuite
+import org.givashot.tls.handshake.CipherSuite
 
 internal data class ApplicationSecrets(
     val clientAppTrafficSecret: ByteArray,

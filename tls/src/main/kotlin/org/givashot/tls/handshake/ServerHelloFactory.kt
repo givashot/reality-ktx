@@ -1,28 +1,25 @@
-package org.givashot.tls
+package org.givashot.tls.handshake
 
 import org.bouncycastle.tls.*
+import org.givashot.tls.ServerProfile
 import org.givashot.tls.constant.TLS_HANDSHAKE_SERVER_HELLO_CONTENT_TYPE
-import org.givashot.tls.entity.handshake.CipherSuite
-import org.givashot.tls.entity.handshake.ClientHelloWrapper
-import org.givashot.tls.entity.handshake.ServerHelloWrapper
+import org.givashot.tls.crypto.*
 import java.io.ByteArrayOutputStream
 import java.util.*
-import org.bouncycastle.tls.CipherSuite as BCTLSCipherSuite
-
-private val supportCipherSuites = intArrayOf(
-    BCTLSCipherSuite.TLS_AES_128_GCM_SHA256,
-    BCTLSCipherSuite.TLS_AES_256_GCM_SHA384,
-    BCTLSCipherSuite.TLS_CHACHA20_POLY1305_SHA256
-)
 
 internal fun newServerHello(
     clientHello: ClientHelloWrapper,
+    profile: ServerProfile = ServerProfile(recordLengths = listOf(2048)),
 ): ServerHelloWrapper {
-    // 1. 从 ClientHello 选择 TLS 1.3 cipher suite
     val clientSuites = clientHello.base.cipherSuites
-    // Select the client preferred cipher suite
-    val cipherSuiteType = clientSuites.firstOrNull { it in supportCipherSuites }
-        ?: error("No mutually supported TLS 1.3 cipher suite")
+    val cipherSuiteType = when (profile.cipherSelection) {
+        ServerProfile.CipherSelectionMode.CLIENT_PREFERENCE ->
+            clientSuites.firstOrNull { it in profile.cipherSuites }
+                ?: error("No mutually supported TLS 1.3 cipher suite")
+        ServerProfile.CipherSelectionMode.SERVER_PREFERENCE ->
+            profile.cipherSuites.firstOrNull { it in clientSuites }
+                ?: error("No mutually supported TLS 1.3 cipher suite")
+    }
     val cipherSuite = CipherSuite.fromId(cipherSuiteType)
     // 2. 找 ClientHello 的 X25519 key_share
     val clientPublicKey = clientHello.clientPubKey ?: throw Exception("Client public key is missing")

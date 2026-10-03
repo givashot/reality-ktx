@@ -1,14 +1,14 @@
-package org.givashot.tls
+package org.givashot.tls.handshake
 
-import org.givashot.tls.constant.TLS_HANDSHAKE_CONTENT_TYPE
-import org.givashot.tls.entity.ApplicationSecrets
-import org.givashot.tls.entity.handshake.ClientHelloWrapper
-import org.givashot.tls.entity.handshake.CertificateData
-import org.givashot.tls.entity.handshake.EncryptedExtensionsData
-import org.givashot.tls.entity.handshake.HandshakeSecrets
+import org.givashot.tls.ServerProfile
+import org.givashot.tls.crypto.ApplicationSecrets
+import org.givashot.tls.crypto.HandshakeSecrets
+import org.givashot.tls.crypto.KeySchedule
+import org.givashot.tls.crypto.digest
 
-internal data class ServerFlightResult(
-    val records: List<ByteArray>,
+internal data class ServerFlight(
+    val serverHello: ByteArray,
+    val encryptedHandshake: ByteArray,
     val transcript: ByteArray,
     val transcriptHash: ByteArray,
     val handshakeSecrets: HandshakeSecrets,
@@ -19,20 +19,19 @@ internal data class ServerFlightResult(
 internal class Tls13ServerHandshake {
     fun buildFlight(
         clientHello: ClientHelloWrapper,
-        transcript: ByteArray,
         encryptedExtensions: EncryptedExtensionsData,
         certificate: CertificateData,
-        recordLengths: List<Int>,
-        recordProtector: TlsRecordProtector,
-    ): ServerFlightResult {
+        profile: ServerProfile,
+    ): ServerFlight {
         require(certificate.certificateChain.isNotEmpty()) { "Server certificate chain is empty" }
 
-        val serverHello = newServerHello(clientHello)
+        val transcript = clientHello.handshakeAndBody
+        val serverHello = newServerHello(clientHello, profile)
         val serverHelloBytes = serverHello.base.encodeHandshake()
-        val handshakeSecrets = deriveHandshakeSecrets(
-            clientHello = clientHello,
-            serverHello = serverHello,
+        val transcriptHash = digest(transcript + serverHelloBytes, serverHello.cipherSuite)
+        val handshakeSecrets = KeySchedule.deriveHandshakeSecrets(
             sharedSecret = serverHello.sharedSecret,
+            transcriptHash = transcriptHash,
             cipherSuite = serverHello.cipherSuite,
         )
 
@@ -50,16 +49,12 @@ internal class Tls13ServerHandshake {
             serverHello.cipherSuite,
         )
         val encryptedHandshake = extensionsBytes + certificateBytes + certificateVerifyBytes + finishedBytes
-        val encryptedRecords = recordProtector.encryptHandshakeFlight(
-            flight = encryptedHandshake,
-            secrets = handshakeSecrets,
-            recordLengths = recordLengths,
-        )
         val nextTranscript = transcript + serverHelloBytes + encryptedHandshake
         val nextTranscriptHash = digest(nextTranscript, serverHello.cipherSuite)
-        val appSecrets = deriveApplicationSecrets(handshakeSecrets, nextTranscriptHash)
-        return ServerFlightResult(
-            records = listOf(tlsRecord(TLS_HANDSHAKE_CONTENT_TYPE, serverHelloBytes)) + encryptedRecords,
+        val appSecrets = KeySchedule.deriveApplicationSecrets(handshakeSecrets, nextTranscriptHash)
+        return ServerFlight(
+            serverHello = serverHelloBytes,
+            encryptedHandshake = encryptedHandshake,
             transcript = nextTranscript,
             transcriptHash = nextTranscriptHash,
             handshakeSecrets = handshakeSecrets,

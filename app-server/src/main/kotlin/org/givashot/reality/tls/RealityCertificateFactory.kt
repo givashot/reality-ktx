@@ -7,8 +7,8 @@ import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
-import org.givashot.tls.globalSecureRandom
-import org.givashot.tls.entity.handshake.CertificateData
+import org.givashot.tls.crypto.globalSecureRandom
+import org.givashot.tls.handshake.CertificateData
 import java.math.BigInteger
 import java.security.KeyPairGenerator
 import java.security.PrivateKey

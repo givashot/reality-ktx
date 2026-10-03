@@ -1,4 +1,4 @@
-package org.givashot.tls.entity.handshake
+package org.givashot.tls.handshake
 
 import org.bouncycastle.tls.ServerHello
 

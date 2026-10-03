@@ -2,8 +2,8 @@ package org.givashot.tls.constant
 
 const val TLS_RECORD_HEADER_LENGTH = 5
 
-// HEAD + 64kb
-const val TLS_MAX_RECORD_SIZE = TLS_RECORD_HEADER_LENGTH + 64 * 1024
+// 2^14 + 256
+const val TLS_MAX_RECORD_SIZE = (1 shl 14) + 256
 
 const val TLS_HANDSHAKE_CONTENT_TYPE = 0x16
 const val TLS_APPLICATION_DATA_CONTENT_TYPE = 0x17

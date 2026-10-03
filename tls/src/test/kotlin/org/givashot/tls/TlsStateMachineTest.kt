@@ -2,41 +2,45 @@ package org.givashot.tls
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import org.givashot.tls.constant.TLS_HANDSHAKE_CONTENT_TYPE
-import org.givashot.tls.entity.handshake.CertificateData
-import org.givashot.tls.entity.handshake.EncryptedExtensionsData
-import org.givashot.tls.entity.ClientTlsEvent
+import org.givashot.tls.crypto.deriveX25519PublicKey
+import org.givashot.tls.crypto.generateX25519PrivateKey
+import org.givashot.tls.crypto.tlsRecord
+import org.givashot.tls.session.ClientTlsEvent
+import org.givashot.tls.handshake.CertificateData
+import org.givashot.tls.handshake.EncryptedExtensionsData
+import org.givashot.tls.session.TlsPhase
+import org.givashot.tls.session.TlsResult
+import org.givashot.tls.session.TlsServerStateMachine
 import java.security.KeyPairGenerator
 
 class TlsStateMachineTest {
     @Test
     fun `new state machine starts waiting for client hello`() {
-        assertEquals(TlsPhase.EXPECT_CLIENT_HELLO, TlsStateMachine().phase)
+        val machine = TlsServerStateMachine(ServerProfile(recordLengths = listOf(128)))
+        assertEquals(TlsPhase.EXPECT_CLIENT_HELLO, machine.phase)
     }
 
     @Test
     fun `server flight cannot be built before client hello`() {
-        val machine = TlsStateMachine()
+        val machine = TlsServerStateMachine(ServerProfile(recordLengths = listOf(128)))
         val privateKey = KeyPairGenerator.getInstance("RSA").apply { initialize(1024) }.generateKeyPair().private
 
-        assertFailsWith<IllegalStateException> {
-            machine.buildServerFlight(
-                EncryptedExtensionsData(),
-                CertificateData(emptyList(), privateKey, 0x0401, "SHA256withRSA"),
-                listOf(128),
-            )
-        }
+        val result = machine.buildServerFlight(
+            EncryptedExtensionsData(),
+            CertificateData(emptyList(), privateKey, 0x0401, "SHA256withRSA"),
+        )
+        assertIs<TlsResult.Err>(result)
         assertEquals(TlsPhase.EXPECT_CLIENT_HELLO, machine.phase)
     }
 
     @Test
     fun `application data encryption is rejected before handshake completion`() {
-        val machine = TlsStateMachine()
-        assertFailsWith<IllegalStateException> {
-            machine.encryptServerApplicationData(byteArrayOf(1), listOf(32))
-        }
+        val machine = TlsServerStateMachine(ServerProfile(recordLengths = listOf(32)))
+        val result = machine.encryptServerApplicationData(byteArrayOf(1))
+        assertIs<TlsResult.Err>(result)
         assertEquals(TlsPhase.EXPECT_CLIENT_HELLO, machine.phase)
     }
 
@@ -44,30 +48,24 @@ class TlsStateMachineTest {
     fun `server flight creates hello and encrypted records from client hello`() {
         val clientPrivateKey = generateX25519PrivateKey()
         val clientHello = clientHelloRecord(clientPrivateKey.deriveX25519PublicKey())
-        val machine = TlsStateMachine()
+        val machine = TlsServerStateMachine(ServerProfile(recordLengths = listOf(2048)))
 
-        val events = machine.processClientData(clientHello)
-        assertTrue(events.single() is ClientTlsEvent.ClientHello)
+        val eventsResult = machine.processClientData(clientHello)
+        assertIs<TlsResult.Ok<List<ClientTlsEvent>>>(eventsResult)
+        assertTrue(eventsResult.value.single() is ClientTlsEvent.ClientHello)
         assertEquals(TlsPhase.SERVER_FLIGHT_READY, machine.phase)
 
         val privateKey = KeyPairGenerator.getInstance("RSA").apply { initialize(1024) }.generateKeyPair().private
         val flight = machine.buildServerFlight(
             EncryptedExtensionsData(),
             CertificateData(listOf(byteArrayOf(1, 2, 3)), privateKey, 0x0401, "SHA256withRSA"),
-            listOf(2048),
         )
 
-        assertEquals(2, flight.size)
-        assertEquals(TLS_HANDSHAKE_CONTENT_TYPE, flight[0][0].toInt() and 0xFF)
+        assertIs<TlsResult.Ok<List<ByteArray>>>(flight)
+        assertEquals(2, flight.value.size)
+        assertEquals(TLS_HANDSHAKE_CONTENT_TYPE, flight.value[0][0].toInt() and 0xFF)
         assertEquals(TlsPhase.EXPECT_CLIENT_FINISHED, machine.phase)
-        assertEquals(2048 + 5, flight[1].size)
-        assertFailsWith<IllegalStateException> {
-            machine.buildServerFlight(
-                EncryptedExtensionsData(),
-                CertificateData(listOf(byteArrayOf(1)), privateKey, 0x0401, "SHA256withRSA"),
-                listOf(2048),
-            )
-        }
+        assertEquals(2048 + 5, flight.value[1].size)
     }
 
     private fun clientHelloRecord(clientPublicKey: ByteArray): ByteArray {

@@ -1,4 +1,6 @@
-package org.givashot.tls.entity.handshake
+package org.givashot.tls.crypto
+
+import org.givashot.tls.handshake.CipherSuite
 
 internal data class HandshakeSecrets(
     val handshakeSecret: ByteArray,

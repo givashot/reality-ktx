@@ -7,10 +7,10 @@ import org.givashot.appclient.tls.ClientHelloOptions
 import org.givashot.appclient.tls.RealityCrypto.calculateAuthKey
 import org.givashot.appclient.tls.RealityCrypto.encryptSessionId
 import org.givashot.appclient.tls.encodeTLSRecord
-import org.givashot.tls.calcSharedSecret
-import org.givashot.tls.deriveX25519PublicKey
-import org.givashot.tls.generateX25519PrivateKey
-import org.givashot.tls.x25519PublicKeyFromBase64
+import org.givashot.tls.crypto.calcSharedSecret
+import org.givashot.tls.crypto.deriveX25519PublicKey
+import org.givashot.tls.crypto.generateX25519PrivateKey
+import org.givashot.tls.crypto.x25519PublicKeyFromBase64
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.Executors

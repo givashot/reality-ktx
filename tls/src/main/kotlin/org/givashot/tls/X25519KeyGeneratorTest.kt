@@ -1,5 +1,7 @@
 package org.givashot.tls
 
+import org.givashot.tls.crypto.deriveX25519PublicKey
+import org.givashot.tls.crypto.generateX25519PrivateKey
 import java.util.*
 
 /**

@@ -1,8 +1,8 @@
-package org.givashot.tls
+package org.givashot.tls.handshake
 
+import org.givashot.tls.crypto.KeySchedule
 import org.givashot.tls.constant.*
-import org.givashot.tls.entity.handshake.CertificateData
-import org.givashot.tls.entity.handshake.CipherSuite
+import org.givashot.tls.crypto.tlsHandshakeMessage
 import java.io.ByteArrayOutputStream
 import java.security.Signature
 
@@ -62,16 +62,9 @@ internal fun buildFinishedMessage(
     transcriptHash: ByteArray,
     cipherSuite: CipherSuite,
 ): ByteArray {
-    val finishedKey = hkdfExpandLabel(
-        trafficSecret,
-        "finished",
-        ByteArray(0),
-        cipherSuite.hashLength,
-        cipherSuite,
-    )
     return tlsHandshakeMessage(
         type = TLS_HANDSHAKE_FINISH_CONTENT_TYPE,
-        body = hmac(finishedKey, transcriptHash, cipherSuite),
+        body = KeySchedule.finishedVerifyData(trafficSecret, transcriptHash, cipherSuite),
     )
 }
 

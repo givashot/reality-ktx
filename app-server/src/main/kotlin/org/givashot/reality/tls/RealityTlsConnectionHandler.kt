@@ -10,12 +10,12 @@ import io.netty.handler.timeout.ReadTimeoutHandler
 import org.givashot.reality.authentication.AuthResult
 import org.givashot.reality.authentication.Authenticator
 import org.givashot.reality.fallback.FallbackHandlerFactory
-import org.givashot.tls.TlsStateMachine
-import org.givashot.tls.constant.TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH
-import org.givashot.tls.constant.TLS_RECORD_HEADER_LENGTH
-import org.givashot.tls.entity.ClientTlsEvent
-import org.givashot.tls.entity.handshake.EncryptedExtensionsData
-import java.io.ByteArrayOutputStream
+import org.givashot.tls.ServerProfile
+import org.givashot.tls.handshake.EncryptedExtensionsData
+import org.givashot.tls.session.ClientTlsEvent
+import org.givashot.tls.session.TlsError
+import org.givashot.tls.session.TlsResult
+import org.givashot.tls.session.TlsServerStateMachine
 import java.util.logging.Level
 import java.util.logging.Logger
 
@@ -25,8 +25,9 @@ class RealityTlsConnectionHandler(
     private val fallbackHandlerFactory: FallbackHandlerFactory,
 ) : ByteToMessageDecoder() {
 
-    private val tlsStateMachine = TlsStateMachine()
-    private val initialClientBytes = ByteArrayOutputStream()
+    private val tlsStateMachine = TlsServerStateMachine(
+        ServerProfile(recordLengths = handshakeRecordProfile.recordLengths),
+    )
     private var authenticated = false
     private var switchedToFallback = false
 
@@ -35,20 +36,23 @@ class RealityTlsConnectionHandler(
 
         val bytes = ByteArray(input.readableBytes())
         input.readBytes(bytes)
-        if (!authenticated) {
-            initialClientBytes.write(bytes)
-            val maxClientHelloWireBytes = TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH * 6 + TLS_RECORD_HEADER_LENGTH
-            if (initialClientBytes.size() > maxClientHelloWireBytes) {
-                switchToFallback(ctx, "ClientHello wire size exceeds configured limit")
-                return
-            }
-        }
 
-        try {
-            processEvents(ctx, tlsStateMachine.processClientData(bytes))
-        } catch (cause: Exception) {
-            if (authenticated) close(ctx, "TLS processing failed", cause)
-            else switchToFallback(ctx, "malformed or unsupported TLS ClientHello", cause)
+        when (val result = tlsStateMachine.processClientData(bytes)) {
+            is TlsResult.Ok -> processEvents(ctx, result.value)
+            is TlsResult.Err -> {
+                val cause = RuntimeException(result.error.description)
+                when (val error = result.error) {
+                    is TlsError.Peer -> {
+                        logger.log(Level.FINE, "TLS peer error: ${error.description}")
+                        if (authenticated) close(ctx, "TLS peer error", cause)
+                        else switchToFallback(ctx, "malformed or unsupported TLS ClientHello", cause)
+                    }
+                    is TlsError.Usage -> {
+                        logger.log(Level.WARNING, "TLS usage error: ${error.description}")
+                        close(ctx, "TLS misuse", cause)
+                    }
+                }
+            }
         }
     }
 
@@ -72,16 +76,30 @@ class RealityTlsConnectionHandler(
 
     private fun sendServerFlight(ctx: ChannelHandlerContext, authKey: ByteArray) {
         authenticated = true
-        initialClientBytes.reset()
         try {
             val certificate = applyAuthKeySignature(authKey)
-            val records = tlsStateMachine.buildServerFlight(
+            val records = when (val result = tlsStateMachine.buildServerFlight(
                 encryptedExtensions = EncryptedExtensionsData(),
                 certificate = certificate,
-                recordLengths = handshakeRecordProfile.recordLengths,
-            )
+            )) {
+                is TlsResult.Ok -> result.value
+                is TlsResult.Err -> {
+                    val cause = RuntimeException(result.error.description)
+                    when (result.error) {
+                        is TlsError.Peer -> close(ctx, "TLS peer error while building server flight", cause)
+                        is TlsError.Usage -> close(ctx, "TLS usage error while building server flight", cause)
+                    }
+                    return
+                }
+            }
             ctx.writeAndFlush(Unpooled.wrappedBuffer(*records.toTypedArray()))
-            processEvents(ctx, tlsStateMachine.processClientData(ByteArray(0)))
+            when (val result = tlsStateMachine.processClientData(ByteArray(0))) {
+                is TlsResult.Ok -> processEvents(ctx, result.value)
+                is TlsResult.Err -> {
+                    val error = result.error
+                    close(ctx, "Could not advance TLS state after server flight", RuntimeException(error.description))
+                }
+            }
         } catch (cause: Exception) {
             close(ctx, "Could not build or send TLS server flight", cause)
         }
@@ -94,10 +112,8 @@ class RealityTlsConnectionHandler(
         if (cause == null) logger.fine("Switching unauthenticated connection to fallback: $reason")
         else logger.log(Level.FINE, "Switching unauthenticated connection to fallback: $reason", cause)
 
-        val initialBytes = initialClientBytes.toByteArray()
-        initialClientBytes.reset()
         try {
-            val replay = initialBytes.takeIf { it.isNotEmpty() }?.let { Unpooled.wrappedBuffer(it) }
+            val replay = tlsStateMachine.rawClientHelloBytes()?.takeIf { it.isNotEmpty() }?.let { Unpooled.wrappedBuffer(it) }
             switchHandler(ctx, fallbackHandlerFactory.newForwardHandler(replay))
         } catch (failure: Exception) {
             logger.log(Level.WARNING, "Could not switch connection to fallback", failure)
@@ -134,7 +150,6 @@ class RealityTlsConnectionHandler(
     }
 
     override fun handlerRemoved0(ctx: ChannelHandlerContext) {
-        if (switchedToFallback) initialClientBytes.reset()
         super.handlerRemoved0(ctx)
     }
 

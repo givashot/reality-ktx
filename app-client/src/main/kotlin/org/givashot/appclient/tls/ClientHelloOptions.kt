@@ -1,9 +1,9 @@
 package org.givashot.appclient.tls
 
 import org.bouncycastle.tls.*
-import org.givashot.tls.deriveX25519PublicKey
-import org.givashot.tls.generateX25519PrivateKey
-import org.givashot.tls.globalSecureRandom
+import org.givashot.tls.crypto.deriveX25519PublicKey
+import org.givashot.tls.crypto.generateX25519PrivateKey
+import org.givashot.tls.crypto.globalSecureRandom
 import java.io.ByteArrayOutputStream
 import java.util.*
 

@@ -1,4 +1,4 @@
-package org.givashot.tls.entity.handshake
+package org.givashot.tls.handshake
 
 import org.bouncycastle.tls.*
 import java.nio.charset.Charset
@@ -8,6 +8,7 @@ data class ClientHelloWrapper(
     val base: ClientHello,
     val handshakeAndBody: ByteArray,
     val sessionIdOffset: Int,
+    val rawRecordBytes: ByteArray,
 ) {
 
     /**

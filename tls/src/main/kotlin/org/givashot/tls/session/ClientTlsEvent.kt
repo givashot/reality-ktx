@@ -1,6 +1,6 @@
-package org.givashot.tls.entity
+package org.givashot.tls.session
 
-import org.givashot.tls.entity.handshake.ClientHelloWrapper
+import org.givashot.tls.handshake.ClientHelloWrapper
 
 sealed interface ClientTlsEvent {
     data class ClientHello(val hello: ClientHelloWrapper) : ClientTlsEvent

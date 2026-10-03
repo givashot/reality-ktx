@@ -1,7 +1,7 @@
-package org.givashot.tls
+package org.givashot.tls.crypto
 
 import org.givashot.tls.constant.*
-import org.givashot.tls.entity.handshake.CipherSuite
+import org.givashot.tls.handshake.CipherSuite
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import javax.crypto.Cipher
