@@ -1,6 +1,7 @@
 package org.givashot.tls.handshake
 
 import org.bouncycastle.tls.ServerHello
+import org.givashot.tls.crypto.CipherSuite
 
 internal data class ServerHelloWrapper(
     val base: ServerHello,

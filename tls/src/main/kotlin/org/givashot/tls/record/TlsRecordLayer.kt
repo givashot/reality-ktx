@@ -2,168 +2,100 @@ package org.givashot.tls.record
 
 import org.givashot.tls.constant.TLS_AEAD_TAG_LENGTH
 import org.givashot.tls.constant.TLS_APPLICATION_DATA_CONTENT_TYPE
-import org.givashot.tls.constant.TLS_HANDSHAKE_CONTENT_TYPE
-import org.givashot.tls.crypto.ApplicationSecrets
-import org.givashot.tls.crypto.HandshakeSecrets
+import org.givashot.tls.constant.TLS_CHANGE_CIPHER_SPEC_CONTENT_TYPE
+import org.givashot.tls.constant.TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH
+import org.givashot.tls.crypto.TrafficKeys
 import org.givashot.tls.crypto.decryptTlsRecord
 import org.givashot.tls.crypto.encryptTlsRecord
 import org.givashot.tls.crypto.tlsRecord
-import org.givashot.tls.handshake.CipherSuite
+import java.io.ByteArrayOutputStream
+import java.util.ArrayDeque
 
-internal sealed interface ReadProtection {
-    data object Plaintext : ReadProtection
-    data class Handshake(
-        val trafficSecret: ByteArray,
-        val key: ByteArray,
-        val iv: ByteArray,
-        val cipherSuite: CipherSuite,
-        var sequence: Long,
-    ) : ReadProtection
-    data class Application(
-        val trafficSecret: ByteArray,
-        val key: ByteArray,
-        val iv: ByteArray,
-        val cipherSuite: CipherSuite,
-        var sequence: Long,
-    ) : ReadProtection
-}
-
-internal sealed interface WriteProtection {
-    data object Plaintext : WriteProtection
-    data class Handshake(
-        val trafficSecret: ByteArray,
-        val key: ByteArray,
-        val iv: ByteArray,
-        val cipherSuite: CipherSuite,
-        var sequence: Long,
-    ) : WriteProtection
-    data class Application(
-        val trafficSecret: ByteArray,
-        val key: ByteArray,
-        val iv: ByteArray,
-        val cipherSuite: CipherSuite,
-        var sequence: Long,
-    ) : WriteProtection
-}
-
-internal class TlsRecordLayer(maxRecordSize: Int) {
+/** TLS record framing, protection and the current read/write [RecordState]. Knows nothing about handshake phases. */
+internal class TlsRecordLayer(
+    private val maxRecordSize: Int,
+    private val state: RecordState = RecordState(),
+) {
     private val decoder = TlsRecordDecoder(maxRecordSize)
-    private var readProtection: ReadProtection = ReadProtection.Plaintext
-    private var writeProtection: WriteProtection = WriteProtection.Plaintext
+    private val pendingRecords = ArrayDeque<TlsRecordMessage>()
 
-    fun feed(bytes: ByteArray): List<TlsRecordMessage> = decoder.feed(bytes)
+    private val plaintextInboundLimit = TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH + 2 * maxRecordSize
+    private val plaintextInbound = ByteArrayOutputStream()
+    private var capturingPlaintextInbound = true
+
+    /** Every byte received while reads are still plaintext, kept so an unauthenticated connection can be replayed. */
+    fun plaintextInboundBytes(): ByteArray = plaintextInbound.toByteArray()
+
+    fun feed(bytes: ByteArray) {
+        if (bytes.isEmpty()) return
+        if (capturingPlaintextInbound) {
+            plaintextInbound.write(bytes)
+            require(plaintextInbound.size() <= plaintextInboundLimit) { "Plaintext TLS input exceeds limit" }
+        }
+        pendingRecords.addAll(decoder.feed(bytes))
+    }
+
+    fun nextRecord(): TlsRecordMessage? = pendingRecords.pollFirst()
 
     fun reset() {
         decoder.reset()
-        readProtection = ReadProtection.Plaintext
-        writeProtection = WriteProtection.Plaintext
+        pendingRecords.clear()
+        state.readProtection = ReadProtection.Plaintext
+        state.writeProtection = WriteProtection.Plaintext
+        state.droppedChangeCipherSpecCount = 0
     }
 
-    fun installHandshakeKeys(secrets: HandshakeSecrets) {
-        readProtection = ReadProtection.Handshake(
-            trafficSecret = secrets.clientHandshakeTrafficSecret,
-            key = secrets.clientWriteKey,
-            iv = secrets.clientWriteIv,
-            cipherSuite = secrets.cipherSuite,
-            sequence = 0L,
-        )
-        writeProtection = WriteProtection.Handshake(
-            trafficSecret = secrets.serverHandshakeTrafficSecret,
-            key = secrets.serverWriteKey,
-            iv = secrets.serverWriteIv,
-            cipherSuite = secrets.cipherSuite,
-            sequence = 0L,
-        )
+    fun installReadProtection(keys: TrafficKeys) {
+        state.readProtection = ReadProtection.Encrypted(keys)
+        capturingPlaintextInbound = false
+        plaintextInbound.reset()
     }
 
-    fun installApplicationKeys(secrets: ApplicationSecrets) {
-        readProtection = ReadProtection.Application(
-            trafficSecret = secrets.clientAppTrafficSecret,
-            key = secrets.clientWriteKey,
-            iv = secrets.clientWriteIv,
-            cipherSuite = secrets.cipherSuite,
-            sequence = 0L,
-        )
-        writeProtection = WriteProtection.Application(
-            trafficSecret = secrets.serverAppTrafficSecret,
-            key = secrets.serverWriteKey,
-            iv = secrets.serverWriteIv,
-            cipherSuite = secrets.cipherSuite,
-            sequence = 0L,
-        )
+    fun installWriteProtection(keys: TrafficKeys) {
+        state.writeProtection = WriteProtection.Encrypted(keys)
+    }
+
+    fun isChangeCipherSpec(record: TlsRecordMessage): Boolean =
+        record.contentType == TLS_CHANGE_CIPHER_SPEC_CONTENT_TYPE
+
+    /** Accepts at most one well-formed compatibility CCS (RFC 8446 appendix D.4). Never touches sequence numbers. */
+    fun dropChangeCipherSpec(record: TlsRecordMessage): Boolean {
+        val wellFormed = record.payload.size == 1 && record.payload[0] == 1.toByte()
+        if (!wellFormed || state.droppedChangeCipherSpecCount >= 1) return false
+        state.droppedChangeCipherSpecCount++
+        return true
     }
 
     fun decode(record: TlsRecordMessage): TlsPlaintext {
-        return when (val protection = readProtection) {
-            is ReadProtection.Plaintext -> TlsPlaintext(record.contentType, record.payload)
-            is ReadProtection.Handshake -> {
-                val plaintext = decryptProtected(record.encodedRecord, protection.key, protection.iv, protection.sequence, protection.cipherSuite)
-                require(plaintext.contentType == TLS_HANDSHAKE_CONTENT_TYPE) { "Expected encrypted handshake record" }
-                protection.sequence = checkedSequenceAfter(protection.sequence, 1)
-                plaintext
-            }
-            is ReadProtection.Application -> {
-                val plaintext = decryptProtected(record.encodedRecord, protection.key, protection.iv, protection.sequence, protection.cipherSuite)
-                require(plaintext.contentType == TLS_APPLICATION_DATA_CONTENT_TYPE) { "Expected application data record" }
-                protection.sequence = checkedSequenceAfter(protection.sequence, 1)
-                plaintext
+        return when (val protection = state.readProtection) {
+            ReadProtection.Plaintext -> TlsPlaintext(record.contentType, record.payload)
+            is ReadProtection.Encrypted -> {
+                val keys = protection.keys
+                val decrypted = decryptTlsRecord(record.encodedRecord, keys.key, keys.iv, keys.sequenceNumber, keys.cipherSuite)
+                keys.sequenceNumber = checkedSequenceAfter(keys.sequenceNumber, 1)
+                TlsPlaintext(decrypted.contentType, decrypted.payload)
             }
         }
     }
 
     fun encode(contentType: Int, payload: ByteArray, recordLengths: List<Int>): List<ByteArray> {
-        return when (val protection = writeProtection) {
-            is WriteProtection.Plaintext -> listOf(tlsRecord(contentType, payload))
-            is WriteProtection.Handshake -> {
-                require(recordLengths.isNotEmpty()) { "TLS handshake record profile is empty" }
-                val records = encryptRecords(
-                    contentType = contentType,
-                    plaintext = payload,
-                    key = protection.key,
-                    iv = protection.iv,
-                    cipherSuite = protection.cipherSuite,
-                    sequenceNumber = protection.sequence,
-                    recordLengths = recordLengths,
-                )
-                protection.sequence = checkedSequenceAfter(protection.sequence, records.size)
-                records
-            }
-            is WriteProtection.Application -> {
-                if (payload.isEmpty()) return emptyList()
-                require(recordLengths.isNotEmpty()) { "Application record profile is empty" }
-                val records = encryptRecords(
-                    contentType = contentType,
-                    plaintext = payload,
-                    key = protection.key,
-                    iv = protection.iv,
-                    cipherSuite = protection.cipherSuite,
-                    sequenceNumber = protection.sequence,
-                    recordLengths = recordLengths,
-                )
-                protection.sequence = checkedSequenceAfter(protection.sequence, records.size)
+        return when (val protection = state.writeProtection) {
+            WriteProtection.Plaintext -> listOf(tlsRecord(contentType, payload))
+            is WriteProtection.Encrypted -> {
+                if (payload.isEmpty() && contentType == TLS_APPLICATION_DATA_CONTENT_TYPE) return emptyList()
+                require(recordLengths.isNotEmpty()) { "TLS record length profile is empty" }
+                val keys = protection.keys
+                val records = encryptRecords(contentType, payload, keys, recordLengths)
+                keys.sequenceNumber = checkedSequenceAfter(keys.sequenceNumber, records.size)
                 records
             }
         }
     }
 
-    private fun decryptProtected(
-        encodedRecord: ByteArray,
-        key: ByteArray,
-        iv: ByteArray,
-        sequence: Long,
-        cipherSuite: CipherSuite,
-    ): TlsPlaintext {
-        val decrypted = decryptTlsRecord(encodedRecord, key, iv, sequence, cipherSuite)
-        return TlsPlaintext(decrypted.contentType, decrypted.payload)
-    }
-
     private fun encryptRecords(
         contentType: Int,
         plaintext: ByteArray,
-        key: ByteArray,
-        iv: ByteArray,
-        cipherSuite: CipherSuite,
-        sequenceNumber: Long,
+        keys: TrafficKeys,
         recordLengths: List<Int>,
     ): List<ByteArray> {
         val capacities = recordLengths.map { targetLength ->
@@ -178,18 +110,16 @@ internal class TlsRecordLayer(maxRecordSize: Int) {
 
         val records = ArrayList<ByteArray>(recordLengths.size)
         var offset = 0
-        recordLengths.forEachIndexed { index, _ ->
-            val capacity = capacities[index]
+        capacities.forEachIndexed { index, capacity ->
             val plainLength = minOf(capacity, plaintext.size - offset)
-            val paddingLength = capacity - plainLength
             records += encryptTlsRecord(
                 contentType = contentType,
                 plaintext = plaintext.copyOfRange(offset, offset + plainLength),
-                writeKey = key,
-                writeIv = iv,
-                sequenceNumber = checkedSequenceAfter(sequenceNumber, index),
-                cipherSuite = cipherSuite,
-                paddingLength = paddingLength,
+                writeKey = keys.key,
+                writeIv = keys.iv,
+                sequenceNumber = checkedSequenceAfter(keys.sequenceNumber, index),
+                cipherSuite = keys.cipherSuite,
+                paddingLength = capacity - plainLength,
             )
             offset += plainLength
         }

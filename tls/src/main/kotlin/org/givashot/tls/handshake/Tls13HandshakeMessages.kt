@@ -1,6 +1,7 @@
 package org.givashot.tls.handshake
 
-import org.givashot.tls.crypto.KeySchedule
+import org.givashot.tls.crypto.CipherSuite
+import org.givashot.tls.crypto.finishedVerifyData
 import org.givashot.tls.constant.*
 import org.givashot.tls.crypto.tlsHandshakeMessage
 import java.io.ByteArrayOutputStream
@@ -64,7 +65,7 @@ internal fun buildFinishedMessage(
 ): ByteArray {
     return tlsHandshakeMessage(
         type = TLS_HANDSHAKE_FINISH_CONTENT_TYPE,
-        body = KeySchedule.finishedVerifyData(trafficSecret, transcriptHash, cipherSuite),
+        body = finishedVerifyData(trafficSecret, transcriptHash, cipherSuite),
     )
 }
 

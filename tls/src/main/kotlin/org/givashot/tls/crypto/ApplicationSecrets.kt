@@ -1,7 +1,5 @@
 package org.givashot.tls.crypto
 
-import org.givashot.tls.handshake.CipherSuite
-
 internal data class ApplicationSecrets(
     val clientAppTrafficSecret: ByteArray,
     val serverAppTrafficSecret: ByteArray,
@@ -9,5 +7,9 @@ internal data class ApplicationSecrets(
     val serverWriteIv: ByteArray,
     val clientWriteKey: ByteArray,
     val clientWriteIv: ByteArray,
-    val cipherSuite: CipherSuite
-)
+    val cipherSuite: CipherSuite,
+) {
+    fun clientTrafficKeys(): TrafficKeys = TrafficKeys(clientWriteKey, clientWriteIv, cipherSuite)
+
+    fun serverTrafficKeys(): TrafficKeys = TrafficKeys(serverWriteKey, serverWriteIv, cipherSuite)
+}

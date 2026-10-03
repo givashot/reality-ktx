@@ -1,7 +1,6 @@
 package org.givashot.tls.crypto
 
 import org.givashot.tls.constant.*
-import org.givashot.tls.handshake.CipherSuite
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import javax.crypto.Cipher
@@ -103,7 +102,7 @@ internal fun encryptTlsRecord(
 ): ByteArray {
     require(sequenceNumber >= 0)
     require(paddingLength >= 0)
-    val inner = plaintext + ByteArray(paddingLength) + contentType.toByte()
+    val inner = plaintext + contentType.toByte() + ByteArray(paddingLength)
     val ciphertextLength = inner.size + TLS_AEAD_TAG_LENGTH
     require(ciphertextLength <= 0xFFFF) { "TLS ciphertext record is too large" }
     val header = byteArrayOf(

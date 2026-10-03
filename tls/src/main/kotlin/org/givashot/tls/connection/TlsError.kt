@@ -1,10 +1,10 @@
-package org.givashot.tls.session
+package org.givashot.tls.connection
 
-/** 状态机显式返回的错误。不通过异常传播。 */
+/** Errors returned explicitly by [TlsConnection]; they are never propagated as exceptions to callers. */
 sealed interface TlsError {
     val description: String
 
-    /** 对端行为导致的错误。产生后状态机进入 Failed 终态。 */
+    /** Caused by the remote peer. The connection moves to the Failed state. */
     sealed interface Peer : TlsError {
         data class UnexpectedContentType(val expected: Int, val actual: Int, val phase: String) : Peer {
             override val description get() = "Unexpected content type $actual (expected $expected) in $phase"
@@ -14,7 +14,6 @@ sealed interface TlsError {
             override val description get() = "Unexpected handshake type $actual (expected $expected)"
         }
 
-        /** 一条记录里夹带了多条握手消息,或握手消息后还有多余数据。 */
         data class UnexpectedExtraHandshakeData(val context: String) : Peer {
             override val description get() = "Unexpected extra handshake data: $context"
         }
@@ -27,6 +26,14 @@ sealed interface TlsError {
             override val description get() = "Malformed ClientHello: $reason"
         }
 
+        data class NegotiationFailed(val reason: String) : Peer {
+            override val description get() = "TLS negotiation failed: $reason"
+        }
+
+        data class InvalidChangeCipherSpec(val reason: String) : Peer {
+            override val description get() = "Invalid ChangeCipherSpec: $reason"
+        }
+
         data object ClientFinishedVerificationFailed : Peer {
             override val description get() = "Client Finished verification failed"
         }
@@ -36,10 +43,10 @@ sealed interface TlsError {
         }
     }
 
-    /** 调用方误用 API 导致的错误。不改变状态机状态(ConnectionClosed/ConnectionFailed 除外,它们本身就反映终态)。 */
+    /** Caused by API misuse. Does not change the connection state. */
     sealed interface Usage : TlsError {
-        data class InvalidState(val operation: String, val phase: String) : Usage {
-            override val description get() = "$operation is not valid in phase $phase"
+        data class InvalidState(val operation: String, val state: String) : Usage {
+            override val description get() = "$operation is not valid in state $state"
         }
 
         data class InvalidArgument(val reason: String) : Usage {
@@ -60,12 +67,5 @@ sealed interface TlsError {
     }
 }
 
-sealed interface TlsResult<out T> {
-    data class Ok<out T>(val value: T) : TlsResult<T>
-    data class Err(val error: TlsError) : TlsResult<Nothing>
-}
-
-inline fun <T> TlsResult<T>.getOrElse(onError: (TlsResult.Err) -> T): T = when (this) {
-    is TlsResult.Ok -> value
-    is TlsResult.Err -> onError(this)
-}
+/** Thrown by the handshake layer for protocol violations; TlsConnection converts it into a [TlsError.Peer]. */
+internal class TlsProtocolException(val error: TlsError.Peer) : RuntimeException(error.description)
