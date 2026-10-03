@@ -27,7 +27,7 @@ internal fun deriveHandshakeSecrets(
     require(serverHello.cipherSuite.id == cipherSuite.id) { "Cipher suite mismatch" }
 
     val zero = ByteArray(cipherSuite.hashLength)
-    val earlySecret = hkdfExtract(zero, ByteArray(0), cipherSuite)
+    val earlySecret = hkdfExtract(zero, zero, cipherSuite)
     val derivedEarlySecret = hkdfExpandLabel(
         earlySecret,
         "derived",
@@ -59,7 +59,7 @@ internal fun deriveHandshakeSecrets(
         cipherSuite.hashLength,
         cipherSuite,
     )
-    val masterSecret = hkdfExtract(derivedHandshakeSecret, ByteArray(0), cipherSuite)
+    val masterSecret = hkdfExtract(derivedHandshakeSecret, zero, cipherSuite)
 
     return HandshakeSecrets(
         handshakeSecret = handshakeSecret,
