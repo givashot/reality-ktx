@@ -6,13 +6,13 @@ import org.givashot.tls.connection.TlsProtocolException
 import org.givashot.tls.constant.TLS_HANDSHAKE_CLIENT_HELLO_CONTENT_TYPE
 import org.givashot.tls.constant.TLS_HANDSHAKE_FINISH_CONTENT_TYPE
 import org.givashot.tls.constant.TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH
-import org.givashot.tls.crypto.ApplicationSecrets
-import org.givashot.tls.crypto.HandshakeSecrets
+import org.givashot.tls.crypto.ApplicationTrafficSecrets
+import org.givashot.tls.crypto.HandshakeTrafficSecrets
 import org.givashot.tls.crypto.Tls13KeySchedule
 
 internal class ServerFlight(
     val serverHello: ByteArray,
-    val encryptedHandshake: ByteArray,
+    val encodedHandshakes: ByteArray,
 )
 
 /**
@@ -23,11 +23,11 @@ internal class Tls13ServerHandshake(
     private val profile: ServerProfile,
     private val state: HandshakeState = HandshakeState(),
 ) {
-    val handshakeSecrets: HandshakeSecrets
-        get() = checkNotNull(state.handshakeSecrets) { "Handshake secrets are not available yet" }
+    val handshakeTrafficSecrets: HandshakeTrafficSecrets
+        get() = checkNotNull(state.handshakeTrafficSecrets) { "Handshake secrets are not available yet" }
 
-    val applicationSecrets: ApplicationSecrets
-        get() = checkNotNull(state.applicationSecrets) { "Application secrets are not available yet" }
+    val applicationTrafficSecrets: ApplicationTrafficSecrets
+        get() = checkNotNull(state.applicationTrafficSecrets) { "Application secrets are not available yet" }
 
     fun reset() = state.reset()
 
@@ -76,7 +76,7 @@ internal class Tls13ServerHandshake(
         val keySchedule = Tls13KeySchedule(suite)
         keySchedule.deriveEarlySecret()
         keySchedule.deriveHandshakeSecret(serverHello.sharedSecret)
-        val handshakeSecrets = keySchedule.handshakeSecrets(transcript.hash(suite))
+        val handshakeSecrets = keySchedule.handshakeTrafficSecrets(transcript.hash(suite))
 
         val extensionsBytes = encodeEncryptedExtensions(encryptedExtensions.extensions)
         transcript.update(extensionsBytes)
@@ -95,13 +95,13 @@ internal class Tls13ServerHandshake(
         keySchedule.deriveMasterSecret()
 
         state.keySchedule = keySchedule
-        state.handshakeSecrets = handshakeSecrets
-        state.applicationSecrets = keySchedule.applicationSecrets(serverFinishedHash)
+        state.handshakeTrafficSecrets = handshakeSecrets
+        state.applicationTrafficSecrets = keySchedule.applicationTrafficSecrets(serverFinishedHash)
         state.serverFinishedTranscriptHash = serverFinishedHash
 
         return ServerFlight(
             serverHello = serverHelloBytes,
-            encryptedHandshake = extensionsBytes + certificateBytes + certificateVerifyBytes + finishedBytes,
+            encodedHandshakes = extensionsBytes + certificateBytes + certificateVerifyBytes + finishedBytes,
         )
     }
 
@@ -120,7 +120,7 @@ internal class Tls13ServerHandshake(
         val keySchedule = checkNotNull(state.keySchedule) { "Server flight has not been built" }
         val verified = keySchedule.verifyClientFinished(
             message.encodedBytes,
-            handshakeSecrets.clientHandshakeTrafficSecret,
+            handshakeTrafficSecrets.clientHandshakeTrafficSecret,
             checkNotNull(state.serverFinishedTranscriptHash),
         )
         if (!verified) throw TlsProtocolException(TlsError.Peer.ClientFinishedVerificationFailed)

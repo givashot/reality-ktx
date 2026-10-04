@@ -47,10 +47,20 @@ internal class Tls13KeySchedule(private val cipherSuite: CipherSuite) {
     fun serverApplicationTrafficSecret(transcriptHash: ByteArray): ByteArray =
         trafficSecret(masterSecret, "s ap traffic", transcriptHash)
 
-    fun handshakeSecrets(transcriptHash: ByteArray): HandshakeSecrets {
+    /**
+     * 基于HandshakeSecret + TranscriptHash 算出 HandshakeTrafficSecrets
+     * 当前TranscriptHash = Hash(CH + SH)
+     * HandshakeSecret基于shared secret计算出来的（无 PSK 场景）
+     * 也就是HandshakeTrafficSecrets是基于shared secret + TranscriptHash得来
+     * HandshakeTrafficSecrets用于TLS HANDSHAKE MESSAGE加解密
+     * FINISHED（双端）的PAYLOAD消息体会基于HandshakeTrafficSecrets计算得来
+     * 双端在准备发送HANDSHAKE TYPE的TLS RECORD时，会使用HandshakeTrafficSecrets来加密TLS RECORD，
+     * 最终TLS RECORD的CONTENT TYPE为APPLICATION DATA，HANDSHAKE TYPE会保留在解密TLS RECORD的PAYLOAD中的最后一个非0字节
+     */
+    fun handshakeTrafficSecrets(transcriptHash: ByteArray): HandshakeTrafficSecrets {
         val clientTraffic = clientHandshakeTrafficSecret(transcriptHash)
         val serverTraffic = serverHandshakeTrafficSecret(transcriptHash)
-        return HandshakeSecrets(
+        return HandshakeTrafficSecrets(
             serverHandshakeTrafficSecret = serverTraffic,
             clientHandshakeTrafficSecret = clientTraffic,
             serverWriteKey = expandKey(serverTraffic),
@@ -61,11 +71,18 @@ internal class Tls13KeySchedule(private val cipherSuite: CipherSuite) {
         )
     }
 
-    fun applicationSecrets(transcriptHash: ByteArray): ApplicationSecrets {
+    /**
+     * 基于MasterSecret + TranscriptHash 算出 ApplicationTrafficSecrets
+     * 当前TranscriptHash = Hash(CH + SH + EE + CA + CAV + FINISH)
+     * MasterSecret基于HandshakeSecret计算出来
+     * ApplicationTrafficSecrets用于TLS APPLICATION MESSAGE加解密
+     * 双端在发送ApplicationData TYPE的TLS RECORD时，会使用ApplicationTrafficSecrets来加密TLS RECORD
+     */
+    fun applicationTrafficSecrets(transcriptHash: ByteArray): ApplicationTrafficSecrets {
         require(transcriptHash.size == cipherSuite.hashLength)
         val clientTraffic = clientApplicationTrafficSecret(transcriptHash)
         val serverTraffic = serverApplicationTrafficSecret(transcriptHash)
-        return ApplicationSecrets(
+        return ApplicationTrafficSecrets(
             clientAppTrafficSecret = clientTraffic,
             serverAppTrafficSecret = serverTraffic,
             serverWriteKey = expandKey(serverTraffic),
@@ -79,6 +96,13 @@ internal class Tls13KeySchedule(private val cipherSuite: CipherSuite) {
     fun finishedVerifyData(trafficSecret: ByteArray, transcriptHash: ByteArray): ByteArray =
         finishedVerifyData(trafficSecret, transcriptHash, cipherSuite)
 
+    /**
+     * 客户端发送过来的FINISHED是通过ClientHandshakeTrafficSecret + transcriptHash(CH + 客户端接收到的（SH + EE + CA + CAV + FINISH）)计算得来
+     * 我们模拟客户端算法，通过ClientHandshakeTrafficSecret + transcriptHash(CH + 服务端本地记录的（SH + EE + CA + CAV + FINISH）)计算出EXPECT CLIENT FINISHED
+     * 再比较这两个数据，如果客户端接收到的（SH + EE + CA + CAV + FINISH）和 服务端本地记录的（SH + EE + CA + CAV + FINISH）不一致
+     * 或者ClientHandshakeTrafficSecret算出来的和我们算出来的不一致
+     * 都会导致校验失败。
+     */
     fun verifyClientFinished(
         message: ByteArray,
         clientHandshakeTrafficSecret: ByteArray,

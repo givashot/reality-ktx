@@ -68,10 +68,10 @@ class TlsConnection internal constructor(
         val outbound = try {
             val flight = handshake.buildServerFlight(command.encryptedExtensions, command.certificate)
             val serverHelloRecords = recordLayer.encode(TLS_HANDSHAKE_CONTENT_TYPE, flight.serverHello, recordLengths)
-            val handshakeSecrets = handshake.handshakeSecrets
-            recordLayer.installWriteProtection(handshakeSecrets.serverTrafficKeys())
-            recordLayer.installReadProtection(handshakeSecrets.clientTrafficKeys())
-            serverHelloRecords + recordLayer.encode(TLS_HANDSHAKE_CONTENT_TYPE, flight.encryptedHandshake, recordLengths)
+            val handshakeTrafficSecrets = handshake.handshakeTrafficSecrets
+            recordLayer.installWriteProtection(handshakeTrafficSecrets.serverTrafficKeys())
+            recordLayer.installReadProtection(handshakeTrafficSecrets.clientTrafficKeys())
+            serverHelloRecords + recordLayer.encode(TLS_HANDSHAKE_CONTENT_TYPE, flight.encodedHandshakes, recordLengths)
         } catch (e: Exception) {
             return fail(toPeerError(e))
         }
@@ -131,9 +131,9 @@ class TlsConnection internal constructor(
                 expectContentType(plaintext.contentType, TLS_HANDSHAKE_CONTENT_TYPE, "AwaitClientFinished")
                     ?.let { return it }
                 if (!handshake.onClientFinishedFragment(plaintext.payload)) return null
-                val application = handshake.applicationSecrets
-                recordLayer.installReadProtection(application.clientTrafficKeys())
-                recordLayer.installWriteProtection(application.serverTrafficKeys())
+                val applicationTrafficSecrets = handshake.applicationTrafficSecrets
+                recordLayer.installReadProtection(applicationTrafficSecrets.clientTrafficKeys())
+                recordLayer.installWriteProtection(applicationTrafficSecrets.serverTrafficKeys())
                 stateMachine.transitionTo(TlsState.Established)
                 events += TlsEvent.ClientFinished
             }

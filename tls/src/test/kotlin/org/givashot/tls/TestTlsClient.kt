@@ -3,7 +3,7 @@ package org.givashot.tls
 import org.givashot.tls.constant.TLS_APPLICATION_DATA_CONTENT_TYPE
 import org.givashot.tls.constant.TLS_HANDSHAKE_CONTENT_TYPE
 import org.givashot.tls.crypto.CipherSuite
-import org.givashot.tls.crypto.HandshakeSecrets
+import org.givashot.tls.crypto.HandshakeTrafficSecrets
 import org.givashot.tls.crypto.Tls13KeySchedule
 import org.givashot.tls.crypto.TrafficKeys
 import org.givashot.tls.crypto.calcSharedSecret
@@ -25,7 +25,7 @@ internal class TestTlsClient(cipherSuiteId: Int = 0x1301) {
     val clientHelloRecord: ByteArray = tlsRecord(TLS_HANDSHAKE_CONTENT_TYPE, clientHelloHandshake)
 
     lateinit var suite: CipherSuite
-    lateinit var handshakeSecrets: HandshakeSecrets
+    lateinit var handshakeTrafficSecrets: HandshakeTrafficSecrets
     lateinit var serverFlightHandshake: ByteArray
     private lateinit var schedule: Tls13KeySchedule
     private lateinit var serverHelloHandshake: ByteArray
@@ -45,10 +45,10 @@ internal class TestTlsClient(cipherSuiteId: Int = 0x1301) {
         schedule = Tls13KeySchedule(suite)
         schedule.deriveEarlySecret()
         schedule.deriveHandshakeSecret(calcSharedSecret(privateKey, serverPublicKey))
-        handshakeSecrets = schedule.handshakeSecrets(digest(clientHelloHandshake + serverHelloHandshake, suite))
+        handshakeTrafficSecrets = schedule.handshakeTrafficSecrets(digest(clientHelloHandshake + serverHelloHandshake, suite))
 
-        val serverKeys = handshakeSecrets.serverTrafficKeys()
-        writeKeys = handshakeSecrets.clientTrafficKeys()
+        val serverKeys = handshakeTrafficSecrets.serverTrafficKeys()
+        writeKeys = handshakeTrafficSecrets.clientTrafficKeys()
         val out = java.io.ByteArrayOutputStream()
         for (record in records.drop(1)) {
             val decrypted = decryptTlsRecord(record, serverKeys.key, serverKeys.iv, serverKeys.sequenceNumber++, suite)
@@ -64,7 +64,7 @@ internal class TestTlsClient(cipherSuiteId: Int = 0x1301) {
 
     fun finishedRecord(): ByteArray {
         val hash = digest(transcriptThroughServerFinished(), suite)
-        val verifyData = schedule.finishedVerifyData(handshakeSecrets.clientHandshakeTrafficSecret, hash)
+        val verifyData = schedule.finishedVerifyData(handshakeTrafficSecrets.clientHandshakeTrafficSecret, hash)
         return encryptHandshake(tlsHandshakeMessage(20, verifyData))
     }
 
@@ -75,7 +75,7 @@ internal class TestTlsClient(cipherSuiteId: Int = 0x1301) {
     /** Switches to application keys; call after the client Finished has been sent. */
     fun startApplicationPhase() {
         schedule.deriveMasterSecret()
-        val application = schedule.applicationSecrets(digest(transcriptThroughServerFinished(), suite))
+        val application = schedule.applicationTrafficSecrets(digest(transcriptThroughServerFinished(), suite))
         writeKeys = application.clientTrafficKeys()
         readKeys = application.serverTrafficKeys()
     }

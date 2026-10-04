@@ -1,6 +1,6 @@
 package org.givashot.tls.crypto
 
-internal data class HandshakeSecrets(
+internal data class HandshakeTrafficSecrets(
     val serverHandshakeTrafficSecret: ByteArray,
     val clientHandshakeTrafficSecret: ByteArray,
     val serverWriteKey: ByteArray,

@@ -26,9 +26,9 @@ class KeyScheduleTest {
             val schedule = Tls13KeySchedule(suite)
             schedule.deriveEarlySecret()
             schedule.deriveHandshakeSecret(sharedSecret)
-            val handshake = schedule.handshakeSecrets(transcript)
+            val handshake = schedule.handshakeTrafficSecrets(transcript)
             schedule.deriveMasterSecret()
-            val application = schedule.applicationSecrets(transcript)
+            val application = schedule.applicationTrafficSecrets(transcript)
 
             assertEquals(suite.keyLen, handshake.serverWriteKey.size)
             assertEquals(suite.keyLen, handshake.clientWriteKey.size)
@@ -53,7 +53,7 @@ class KeyScheduleTest {
         fun derive() = Tls13KeySchedule(suite).also {
             it.deriveEarlySecret()
             it.deriveHandshakeSecret(shared)
-        }.handshakeSecrets(hash)
+        }.handshakeTrafficSecrets(hash)
 
         assertContentEquals(derive().serverHandshakeTrafficSecret, derive().serverHandshakeTrafficSecret)
     }
@@ -65,7 +65,7 @@ class KeyScheduleTest {
         val schedule = Tls13KeySchedule(suite)
         schedule.deriveEarlySecret()
         schedule.deriveHandshakeSecret(ByteArray(32))
-        val secrets = schedule.handshakeSecrets(transcript)
+        val secrets = schedule.handshakeTrafficSecrets(transcript)
         val good = schedule.finishedVerifyData(secrets.clientHandshakeTrafficSecret, transcript)
         val bad = good.copyOf().also { it[0] = (it[0].toInt() xor 1).toByte() }
 
