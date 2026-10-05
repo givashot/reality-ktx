@@ -106,7 +106,7 @@ internal fun encryptTlsRecord(
     val ciphertextLength = inner.size + TLS_AEAD_TAG_LENGTH
     require(ciphertextLength <= 0xFFFF) { "TLS ciphertext record is too large" }
     val header = byteArrayOf(
-        TLS_APPLICATION_DATA_CONTENT_TYPE.toByte(),
+        TLS_CONTENT_TYPE_APPLICATION_DATA_.toByte(),
         TLS_RECORD_VERSION_HIGH.toByte(),
         TLS_RECORD_VERSION_LOW.toByte(),
         (ciphertextLength ushr 8).toByte(),
@@ -131,7 +131,7 @@ internal fun decryptTlsRecord(
     cipherSuite: CipherSuite,
 ): DecryptedTlsRecord {
     require(record.size >= 5 + TLS_AEAD_TAG_LENGTH + 1)
-    require(record[0].toInt() and 0xFF == TLS_APPLICATION_DATA_CONTENT_TYPE)
+    require(record[0].toInt() and 0xFF == TLS_CONTENT_TYPE_APPLICATION_DATA_)
     require(record[1].toInt() and 0xFF == TLS_RECORD_VERSION_HIGH)
     require(record[2].toInt() and 0xFF == TLS_RECORD_VERSION_LOW)
     val length = ((record[3].toInt() and 0xFF) shl 8) or (record[4].toInt() and 0xFF)
@@ -152,7 +152,7 @@ internal fun decryptTlsRecord(
     while (contentEnd >= 0 && inner[contentEnd].toInt() == 0) contentEnd--
     require(contentEnd >= 0)
     val contentType = inner[contentEnd].toInt() and 0xFF
-    require(contentType == TLS_HANDSHAKE_CONTENT_TYPE || contentType == TLS_APPLICATION_DATA_CONTENT_TYPE)
+    require(contentType == TLS_CONTENT_TYPE_HANDSHAKE || contentType == TLS_CONTENT_TYPE_APPLICATION_DATA_)
     return DecryptedTlsRecord(contentType, inner.copyOfRange(0, contentEnd))
 }
 

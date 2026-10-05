@@ -34,3 +34,5 @@ internal class TlsStateMachine(initialState: TlsState = TlsState.AwaitClientHell
         TlsState.Closed -> true
     }
 }
+
+fun TlsState.shutdown() = this is TlsState.Closed || this is TlsState.Failed

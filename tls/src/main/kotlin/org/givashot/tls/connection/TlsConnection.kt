@@ -1,14 +1,15 @@
 package org.givashot.tls.connection
 
 import org.givashot.tls.ServerProfile
-import org.givashot.tls.constant.TLS_APPLICATION_DATA_CONTENT_TYPE
-import org.givashot.tls.constant.TLS_HANDSHAKE_CONTENT_TYPE
+import org.givashot.tls.constant.TLS_CONTENT_TYPE_APPLICATION_DATA_
+import org.givashot.tls.constant.TLS_CONTENT_TYPE_HANDSHAKE
 import org.givashot.tls.handshake.Tls13ServerHandshake
 import org.givashot.tls.record.TlsPlaintext
 import org.givashot.tls.record.TlsRecordLayer
 import org.givashot.tls.record.TlsRecordMessage
 import org.givashot.tls.state.TlsState
 import org.givashot.tls.state.TlsStateMachine
+import org.givashot.tls.state.shutdown
 import java.io.IOException
 import java.security.GeneralSecurityException
 
@@ -28,7 +29,7 @@ class TlsConnection internal constructor(
     fun unauthenticatedInboundBytes(): ByteArray = recordLayer.plaintextInboundBytes()
 
     fun receive(bytes: ByteArray): TlsConnectionResult {
-        usageErrorForTerminalState()?.let { return TlsConnectionResult.Err(it) }
+        usageErrorForShutdownState()?.let { return TlsConnectionResult.Err(it) }
         if (state == TlsState.ProcessingClientHello && bytes.isNotEmpty()) {
             return TlsConnectionResult.Err(TlsError.Usage.InputWhileAwaitingServerFlight)
         }
@@ -56,7 +57,7 @@ class TlsConnection internal constructor(
     }
 
     private fun sendServerFlight(command: TlsCommand.SendServerFlight): TlsConnectionResult {
-        usageErrorForTerminalState()?.let { return TlsConnectionResult.Err(it) }
+        usageErrorForShutdownState()?.let { return TlsConnectionResult.Err(it) }
         if (state != TlsState.ProcessingClientHello) {
             return TlsConnectionResult.Err(TlsError.Usage.InvalidState("SendServerFlight", state.toString()))
         }
@@ -67,11 +68,11 @@ class TlsConnection internal constructor(
 
         val outbound = try {
             val flight = handshake.buildServerFlight(command.encryptedExtensions, command.certificate)
-            val serverHelloRecords = recordLayer.encode(TLS_HANDSHAKE_CONTENT_TYPE, flight.serverHello, recordLengths)
+            val serverHelloRecords = recordLayer.encode(TLS_CONTENT_TYPE_HANDSHAKE, flight.serverHello, recordLengths)
             val handshakeTrafficSecrets = handshake.handshakeTrafficSecrets
             recordLayer.installWriteProtection(handshakeTrafficSecrets.serverTrafficKeys())
             recordLayer.installReadProtection(handshakeTrafficSecrets.clientTrafficKeys())
-            serverHelloRecords + recordLayer.encode(TLS_HANDSHAKE_CONTENT_TYPE, flight.encodedHandshakes, recordLengths)
+            serverHelloRecords + recordLayer.encode(TLS_CONTENT_TYPE_HANDSHAKE, flight.encodedHandshakes, recordLengths)
         } catch (e: Exception) {
             return fail(toPeerError(e))
         }
@@ -81,13 +82,13 @@ class TlsConnection internal constructor(
     }
 
     private fun sendApplicationData(command: TlsCommand.SendApplicationData): TlsConnectionResult {
-        usageErrorForTerminalState()?.let { return TlsConnectionResult.Err(it) }
+        usageErrorForShutdownState()?.let { return TlsConnectionResult.Err(it) }
         if (state != TlsState.Established) {
             return TlsConnectionResult.Err(TlsError.Usage.InvalidState("SendApplicationData", state.toString()))
         }
         val records = try {
             recordLayer.encode(
-                TLS_APPLICATION_DATA_CONTENT_TYPE,
+                TLS_CONTENT_TYPE_APPLICATION_DATA_,
                 command.data,
                 command.recordLengths ?: profile.recordLengths,
             )
@@ -100,7 +101,7 @@ class TlsConnection internal constructor(
     /** Processes queued records until one needs the application (ClientHello) or the queue is empty. */
     private fun drain(outbound: List<ByteArray>): TlsConnectionResult {
         val events = ArrayList<TlsEvent>()
-        while (state != TlsState.ProcessingClientHello && !isTerminal(state)) {
+        while (state != TlsState.ProcessingClientHello && !state.shutdown()) {
             val record = recordLayer.nextRecord() ?: break
             val error = try {
                 handleRecord(record, events)
@@ -117,7 +118,7 @@ class TlsConnection internal constructor(
 
         when (state) {
             TlsState.AwaitClientHello -> {
-                expectContentType(record.contentType, TLS_HANDSHAKE_CONTENT_TYPE, "AwaitClientHello")?.let { return it }
+                expectContentType(record.contentType, TLS_CONTENT_TYPE_HANDSHAKE, "AwaitClientHello")?.let { return it }
                 val hello = handshake.onClientHelloFragment(record.payload) ?: return null
                 stateMachine.transitionTo(TlsState.ProcessingClientHello)
                 handshake.processClientHello()
@@ -125,10 +126,10 @@ class TlsConnection internal constructor(
             }
 
             TlsState.AwaitClientHandshake, TlsState.AwaitClientFinished -> {
-                expectContentType(record.contentType, TLS_APPLICATION_DATA_CONTENT_TYPE, "AwaitClientFinished")
+                expectContentType(record.contentType, TLS_CONTENT_TYPE_APPLICATION_DATA_, "AwaitClientFinished")
                     ?.let { return it }
                 val plaintext = recordLayer.decode(record)
-                expectContentType(plaintext.contentType, TLS_HANDSHAKE_CONTENT_TYPE, "AwaitClientFinished")
+                expectContentType(plaintext.contentType, TLS_CONTENT_TYPE_HANDSHAKE, "AwaitClientFinished")
                     ?.let { return it }
                 if (!handshake.onClientFinishedFragment(plaintext.payload)) return null
                 val applicationTrafficSecrets = handshake.applicationTrafficSecrets
@@ -139,9 +140,9 @@ class TlsConnection internal constructor(
             }
 
             TlsState.Established -> {
-                expectContentType(record.contentType, TLS_APPLICATION_DATA_CONTENT_TYPE, "Established")?.let { return it }
+                expectContentType(record.contentType, TLS_CONTENT_TYPE_APPLICATION_DATA_, "Established")?.let { return it }
                 val plaintext: TlsPlaintext = recordLayer.decode(record)
-                expectContentType(plaintext.contentType, TLS_APPLICATION_DATA_CONTENT_TYPE, "Established")
+                expectContentType(plaintext.contentType, TLS_CONTENT_TYPE_APPLICATION_DATA_, "Established")
                     ?.let { return it }
                 events += TlsEvent.ClientApplicationData(plaintext.payload)
             }
@@ -167,13 +168,11 @@ class TlsConnection internal constructor(
     private fun expectContentType(actual: Int, expected: Int, phase: String): TlsError.Peer? =
         if (actual == expected) null else TlsError.Peer.UnexpectedContentType(expected, actual, phase)
 
-    private fun usageErrorForTerminalState(): TlsError.Usage? = when (val current = state) {
-        TlsState.Closed -> TlsError.Usage.ConnectionClosed
+    private fun usageErrorForShutdownState(): TlsError.Usage? = when (val current = state) {
+        is TlsState.Closed -> TlsError.Usage.ConnectionClosed
         is TlsState.Failed -> TlsError.Usage.ConnectionFailed(current.error)
         else -> null
     }
-
-    private fun isTerminal(state: TlsState): Boolean = state == TlsState.Closed || state is TlsState.Failed
 
     private fun fail(error: TlsError.Peer): TlsConnectionResult.Err {
         stateMachine.fail(error)

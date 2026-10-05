@@ -4,7 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertContentEquals
-import org.givashot.tls.constant.TLS_HANDSHAKE_CONTENT_TYPE
+import org.givashot.tls.constant.TLS_CONTENT_TYPE_HANDSHAKE
 import org.givashot.tls.crypto.tlsRecord
 import org.givashot.tls.handshake.HandshakeMessage
 import org.givashot.tls.handshake.HandshakeMessageDecoder
@@ -13,7 +13,7 @@ import org.givashot.tls.record.TlsRecordDecoder
 class TlsDecoderTest {
     @Test
     fun `record decoder retains split headers and bodies`() {
-        val encoded = tlsRecord(TLS_HANDSHAKE_CONTENT_TYPE, byteArrayOf(1, 2, 3, 4))
+        val encoded = tlsRecord(TLS_CONTENT_TYPE_HANDSHAKE, byteArrayOf(1, 2, 3, 4))
         val decoder = TlsRecordDecoder()
 
         assertEquals(emptyList(), decoder.feed(encoded.copyOfRange(0, 3)))
@@ -21,15 +21,15 @@ class TlsDecoderTest {
         val decoded = decoder.feed(encoded.copyOfRange(7, encoded.size))
 
         assertEquals(1, decoded.size)
-        assertEquals(TLS_HANDSHAKE_CONTENT_TYPE, decoded.single().contentType)
+        assertEquals(TLS_CONTENT_TYPE_HANDSHAKE, decoded.single().contentType)
         assertContentEquals(byteArrayOf(1, 2, 3, 4), decoded.single().payload)
         assertContentEquals(encoded, decoded.single().encodedRecord)
     }
 
     @Test
     fun `record decoder emits multiple records from one input`() {
-        val first = tlsRecord(TLS_HANDSHAKE_CONTENT_TYPE, byteArrayOf(1))
-        val second = tlsRecord(TLS_HANDSHAKE_CONTENT_TYPE, byteArrayOf(2, 3))
+        val first = tlsRecord(TLS_CONTENT_TYPE_HANDSHAKE, byteArrayOf(1))
+        val second = tlsRecord(TLS_CONTENT_TYPE_HANDSHAKE, byteArrayOf(2, 3))
         val decoded = TlsRecordDecoder().feed(first + second)
 
         assertEquals(2, decoded.size)

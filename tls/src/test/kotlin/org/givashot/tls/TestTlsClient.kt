@@ -1,19 +1,8 @@
 package org.givashot.tls
 
-import org.givashot.tls.constant.TLS_APPLICATION_DATA_CONTENT_TYPE
-import org.givashot.tls.constant.TLS_HANDSHAKE_CONTENT_TYPE
-import org.givashot.tls.crypto.CipherSuite
-import org.givashot.tls.crypto.HandshakeTrafficSecrets
-import org.givashot.tls.crypto.Tls13KeySchedule
-import org.givashot.tls.crypto.TrafficKeys
-import org.givashot.tls.crypto.calcSharedSecret
-import org.givashot.tls.crypto.decryptTlsRecord
-import org.givashot.tls.crypto.deriveX25519PublicKey
-import org.givashot.tls.crypto.digest
-import org.givashot.tls.crypto.encryptTlsRecord
-import org.givashot.tls.crypto.generateX25519PrivateKey
-import org.givashot.tls.crypto.tlsHandshakeMessage
-import org.givashot.tls.crypto.tlsRecord
+import org.givashot.tls.constant.TLS_CONTENT_TYPE_APPLICATION_DATA_
+import org.givashot.tls.constant.TLS_CONTENT_TYPE_HANDSHAKE
+import org.givashot.tls.crypto.*
 import org.givashot.tls.handshake.CertificateData
 import java.security.KeyPairGenerator
 
@@ -22,7 +11,7 @@ internal class TestTlsClient(cipherSuiteId: Int = 0x1301) {
     private val privateKey = generateX25519PrivateKey()
     val publicKey: ByteArray = privateKey.deriveX25519PublicKey()
     val clientHelloHandshake: ByteArray = buildClientHello(publicKey, cipherSuiteId)
-    val clientHelloRecord: ByteArray = tlsRecord(TLS_HANDSHAKE_CONTENT_TYPE, clientHelloHandshake)
+    val clientHelloRecord: ByteArray = tlsRecord(TLS_CONTENT_TYPE_HANDSHAKE, clientHelloHandshake)
 
     lateinit var suite: CipherSuite
     lateinit var handshakeTrafficSecrets: HandshakeTrafficSecrets
@@ -52,7 +41,7 @@ internal class TestTlsClient(cipherSuiteId: Int = 0x1301) {
         val out = java.io.ByteArrayOutputStream()
         for (record in records.drop(1)) {
             val decrypted = decryptTlsRecord(record, serverKeys.key, serverKeys.iv, serverKeys.sequenceNumber++, suite)
-            check(decrypted.contentType == TLS_HANDSHAKE_CONTENT_TYPE)
+            check(decrypted.contentType == TLS_CONTENT_TYPE_HANDSHAKE)
             out.write(decrypted.payload)
         }
         serverFlightHandshake = out.toByteArray()
@@ -69,7 +58,7 @@ internal class TestTlsClient(cipherSuiteId: Int = 0x1301) {
     }
 
     fun encryptHandshake(message: ByteArray): ByteArray = encryptTlsRecord(
-        TLS_HANDSHAKE_CONTENT_TYPE, message, writeKeys.key, writeKeys.iv, writeKeys.sequenceNumber++, suite,
+        TLS_CONTENT_TYPE_HANDSHAKE, message, writeKeys.key, writeKeys.iv, writeKeys.sequenceNumber++, suite,
     )
 
     /** Switches to application keys; call after the client Finished has been sent. */
@@ -81,13 +70,13 @@ internal class TestTlsClient(cipherSuiteId: Int = 0x1301) {
     }
 
     fun encryptApplicationData(data: ByteArray): ByteArray = encryptTlsRecord(
-        TLS_APPLICATION_DATA_CONTENT_TYPE, data, writeKeys.key, writeKeys.iv, writeKeys.sequenceNumber++, suite,
+        TLS_CONTENT_TYPE_APPLICATION_DATA_, data, writeKeys.key, writeKeys.iv, writeKeys.sequenceNumber++, suite,
     )
 
     fun decryptApplicationData(record: ByteArray): ByteArray {
         val keys = checkNotNull(readKeys)
         val decrypted = decryptTlsRecord(record, keys.key, keys.iv, keys.sequenceNumber++, suite)
-        check(decrypted.contentType == TLS_APPLICATION_DATA_CONTENT_TYPE)
+        check(decrypted.contentType == TLS_CONTENT_TYPE_APPLICATION_DATA_)
         return decrypted.payload
     }
 

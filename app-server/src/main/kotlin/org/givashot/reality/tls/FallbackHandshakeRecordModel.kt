@@ -8,8 +8,8 @@ import io.netty.channel.socket.nio.NioSocketChannel
 import io.netty.handler.ssl.SslContextBuilder
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory
 import org.givashot.reality.config.RealityConfig
-import org.givashot.tls.constant.TLS_APPLICATION_DATA_CONTENT_TYPE
-import org.givashot.tls.constant.TLS_HANDSHAKE_CONTENT_TYPE
+import org.givashot.tls.constant.TLS_CONTENT_TYPE_APPLICATION_DATA_
+import org.givashot.tls.constant.TLS_CONTENT_TYPE_HANDSHAKE
 import org.givashot.tls.constant.TLS_RECORD_HEADER_LENGTH
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
@@ -129,7 +129,7 @@ class FallbackHandshakeRecordModel(
             val writerIndex = buf.writerIndex()
             while (idx + TLS_RECORD_HEADER_LENGTH <= writerIndex) {
                 val type = buf.getUnsignedByte(idx).toInt()
-                if (type != TLS_HANDSHAKE_CONTENT_TYPE) return true
+                if (type != TLS_CONTENT_TYPE_HANDSHAKE) return true
                 val length = buf.getUnsignedShort(idx + 3)
                 idx += TLS_RECORD_HEADER_LENGTH + length
             }
@@ -166,7 +166,7 @@ class FallbackHandshakeRecordModel(
 
                 val type = header[0].toInt() and 0xFF
                 val length = ((header[3].toInt() and 0xFF) shl 8) or (header[4].toInt() and 0xFF)
-                if (type == TLS_APPLICATION_DATA_CONTENT_TYPE) {
+                if (type == TLS_CONTENT_TYPE_APPLICATION_DATA_) {
                     applicationDataRecordLengths.add(length)
                 }
 

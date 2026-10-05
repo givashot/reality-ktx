@@ -1,21 +1,22 @@
 package org.givashot.tls.record
 
 import org.givashot.tls.constant.TLS_AEAD_TAG_LENGTH
-import org.givashot.tls.constant.TLS_APPLICATION_DATA_CONTENT_TYPE
-import org.givashot.tls.constant.TLS_CHANGE_CIPHER_SPEC_CONTENT_TYPE
+import org.givashot.tls.constant.TLS_CONTENT_TYPE_APPLICATION_DATA_
+import org.givashot.tls.constant.TLS_CONTENT_TYPE_CCS
 import org.givashot.tls.constant.TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH
 import org.givashot.tls.crypto.TrafficKeys
 import org.givashot.tls.crypto.decryptTlsRecord
 import org.givashot.tls.crypto.encryptTlsRecord
 import org.givashot.tls.crypto.tlsRecord
 import java.io.ByteArrayOutputStream
-import java.util.ArrayDeque
+import java.util.*
 
 /** TLS record framing, protection and the current read/write [RecordState]. Knows nothing about handshake phases. */
 internal class TlsRecordLayer(
-    private val maxRecordSize: Int,
-    private val state: RecordState = RecordState(),
+    maxRecordSize: Int,
 ) {
+
+    private val state: RecordState = RecordState()
     private val decoder = TlsRecordDecoder(maxRecordSize)
     private val pendingRecords = ArrayDeque<TlsRecordMessage>()
 
@@ -56,7 +57,7 @@ internal class TlsRecordLayer(
     }
 
     fun isChangeCipherSpec(record: TlsRecordMessage): Boolean =
-        record.contentType == TLS_CHANGE_CIPHER_SPEC_CONTENT_TYPE
+        record.contentType == TLS_CONTENT_TYPE_CCS
 
     /** Accepts at most one well-formed compatibility CCS (RFC 8446 appendix D.4). Never touches sequence numbers. */
     fun dropChangeCipherSpec(record: TlsRecordMessage): Boolean {
@@ -82,7 +83,7 @@ internal class TlsRecordLayer(
         return when (val protection = state.writeProtection) {
             WriteProtection.Plaintext -> listOf(tlsRecord(contentType, payload))
             is WriteProtection.Encrypted -> {
-                if (payload.isEmpty() && contentType == TLS_APPLICATION_DATA_CONTENT_TYPE) return emptyList()
+                if (payload.isEmpty() && contentType == TLS_CONTENT_TYPE_APPLICATION_DATA_) return emptyList()
                 require(recordLengths.isNotEmpty()) { "TLS record length profile is empty" }
                 val keys = protection.keys
                 val records = encryptRecords(contentType, payload, keys, recordLengths)
