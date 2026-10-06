@@ -34,6 +34,26 @@ sealed interface TlsError {
             override val description get() = "Invalid ChangeCipherSpec: $reason"
         }
 
+        data class TooManyEmptyRecords(val limit: Int) : Peer {
+            override val description get() = "More than $limit consecutive empty records"
+        }
+
+        data class MalformedAlert(val length: Int) : Peer {
+            override val description get() = "Malformed alert of length $length"
+        }
+
+        data class UnexpectedRecord(val type: Int, val phase: String) : Peer {
+            override val description get() = "Unexpected record of type $type in $phase"
+        }
+
+        data class AlertReceived(val alertCode: Int) : Peer {
+            override val description get() = "Peer sent fatal alert $alertCode"
+        }
+
+        data object BadRecordMac : Peer {
+            override val description get() = "Record decryption failed"
+        }
+
         data object ClientFinishedVerificationFailed : Peer {
             override val description get() = "Client Finished verification failed"
         }
@@ -51,10 +71,6 @@ sealed interface TlsError {
 
         data class InvalidArgument(val reason: String) : Usage {
             override val description get() = reason
-        }
-
-        data object InputWhileAwaitingServerFlight : Usage {
-            override val description get() = "Server flight must be built before processing additional client data"
         }
 
         data object ConnectionClosed : Usage {

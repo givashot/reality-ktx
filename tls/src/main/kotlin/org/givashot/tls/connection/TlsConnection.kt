@@ -4,9 +4,9 @@ import org.givashot.tls.ServerProfile
 import org.givashot.tls.constant.TLS_CONTENT_TYPE_APPLICATION_DATA_
 import org.givashot.tls.constant.TLS_CONTENT_TYPE_HANDSHAKE
 import org.givashot.tls.handshake.Tls13ServerHandshake
-import org.givashot.tls.record.TlsPlaintext
 import org.givashot.tls.record.TlsRecordLayer
-import org.givashot.tls.record.TlsRecordMessage
+import org.givashot.tls.state.TlsAlert
+import org.givashot.tls.state.TlsDecision
 import org.givashot.tls.state.TlsState
 import org.givashot.tls.state.TlsStateMachine
 import org.givashot.tls.state.shutdown
@@ -30,9 +30,6 @@ class TlsConnection internal constructor(
 
     fun receive(bytes: ByteArray): TlsConnectionResult {
         usageErrorForShutdownState()?.let { return TlsConnectionResult.Err(it) }
-        if (state == TlsState.ProcessingClientHello && bytes.isNotEmpty()) {
-            return TlsConnectionResult.Err(TlsError.Usage.InputWhileAwaitingServerFlight)
-        }
         try {
             recordLayer.feed(bytes)
         } catch (e: Exception) {
@@ -98,13 +95,13 @@ class TlsConnection internal constructor(
         return TlsConnectionResult.Ok(outbound = records)
     }
 
-    /** Processes queued records until one needs the application (ClientHello) or the queue is empty. */
+    /** Feeds queued record events through the state machine and acts on its decisions until the queue is empty. */
     private fun drain(outbound: List<ByteArray>): TlsConnectionResult {
         val events = ArrayList<TlsEvent>()
-        while (state != TlsState.ProcessingClientHello && !state.shutdown()) {
-            val record = recordLayer.nextRecord() ?: break
+        while (!state.shutdown()) {
             val error = try {
-                handleRecord(record, events)
+                val event = recordLayer.nextEvent() ?: break
+                handleDecision(stateMachine.accept(event), events)
             } catch (e: Exception) {
                 toPeerError(e)
             }
@@ -113,25 +110,28 @@ class TlsConnection internal constructor(
         return TlsConnectionResult.Ok(events, outbound)
     }
 
-    private fun handleRecord(record: TlsRecordMessage, events: MutableList<TlsEvent>): TlsError.Peer? {
-        if (recordLayer.isChangeCipherSpec(record)) return handleChangeCipherSpec(record)
+    private fun handleDecision(decision: TlsDecision, events: MutableList<TlsEvent>): TlsError.Peer? {
+        when (decision) {
+            TlsDecision.Ignore -> Unit
+            is TlsDecision.Reject -> return decision.error
+            is TlsDecision.ApplicationData -> events += TlsEvent.ClientApplicationData(decision.payload)
+            is TlsDecision.HandshakeFragment -> handleHandshakeFragment(decision.payload, events)
+            is TlsDecision.Alert -> return handleAlert(decision.payload)
+        }
+        return null
+    }
 
+    private fun handleHandshakeFragment(payload: ByteArray, events: MutableList<TlsEvent>) {
         when (state) {
             TlsState.AwaitClientHello -> {
-                expectContentType(record.contentType, TLS_CONTENT_TYPE_HANDSHAKE, "AwaitClientHello")?.let { return it }
-                val hello = handshake.onClientHelloFragment(record.payload) ?: return null
+                val hello = handshake.onClientHelloFragment(payload) ?: return
                 stateMachine.transitionTo(TlsState.ProcessingClientHello)
                 handshake.processClientHello()
                 events += TlsEvent.ClientHello(hello)
             }
 
             TlsState.AwaitClientHandshake, TlsState.AwaitClientFinished -> {
-                expectContentType(record.contentType, TLS_CONTENT_TYPE_APPLICATION_DATA_, "AwaitClientFinished")
-                    ?.let { return it }
-                val plaintext = recordLayer.decode(record)
-                expectContentType(plaintext.contentType, TLS_CONTENT_TYPE_HANDSHAKE, "AwaitClientFinished")
-                    ?.let { return it }
-                if (!handshake.onClientFinishedFragment(plaintext.payload)) return null
+                if (!handshake.onClientFinishedFragment(payload)) return
                 val applicationTrafficSecrets = handshake.applicationTrafficSecrets
                 recordLayer.installReadProtection(applicationTrafficSecrets.clientTrafficKeys())
                 recordLayer.installWriteProtection(applicationTrafficSecrets.serverTrafficKeys())
@@ -139,34 +139,23 @@ class TlsConnection internal constructor(
                 events += TlsEvent.ClientFinished
             }
 
-            TlsState.Established -> {
-                expectContentType(record.contentType, TLS_CONTENT_TYPE_APPLICATION_DATA_, "Established")?.let { return it }
-                val plaintext: TlsPlaintext = recordLayer.decode(record)
-                expectContentType(plaintext.contentType, TLS_CONTENT_TYPE_APPLICATION_DATA_, "Established")
-                    ?.let { return it }
-                events += TlsEvent.ClientApplicationData(plaintext.payload)
+            else -> error("Handshake fragment accepted in state $state")
+        }
+    }
+
+    /** RFC 8446 section 6: exactly one 2-byte alert per record; close_notify and user_canceled are not fatal to us. */
+    private fun handleAlert(payload: ByteArray): TlsError.Peer? {
+        if (payload.size != 2) return TlsError.Peer.MalformedAlert(payload.size)
+        return when (val code = payload[1].toInt() and 0xFF) {
+            TlsAlert.CLOSE_NOTIFY_CODE -> {
+                close()
+                null
             }
 
-            TlsState.ProcessingClientHello, is TlsState.Failed, TlsState.Closed ->
-                error("Record handled in state " + state)
+            TlsAlert.USER_CANCELED_CODE -> null
+            else -> TlsError.Peer.AlertReceived(code)
         }
-        return null
     }
-
-    /** A compatibility CCS is legal only between ClientHello and client Finished (RFC 8446 appendix D.4). */
-    private fun handleChangeCipherSpec(record: TlsRecordMessage): TlsError.Peer? {
-        val allowed = state == TlsState.AwaitClientHandshake || state == TlsState.AwaitClientFinished
-        if (!allowed) {
-            return TlsError.Peer.InvalidChangeCipherSpec("unexpected ChangeCipherSpec in state " + state)
-        }
-        if (!recordLayer.dropChangeCipherSpec(record)) {
-            return TlsError.Peer.InvalidChangeCipherSpec("malformed or repeated ChangeCipherSpec")
-        }
-        return null
-    }
-
-    private fun expectContentType(actual: Int, expected: Int, phase: String): TlsError.Peer? =
-        if (actual == expected) null else TlsError.Peer.UnexpectedContentType(expected, actual, phase)
 
     private fun usageErrorForShutdownState(): TlsError.Usage? = when (val current = state) {
         is TlsState.Closed -> TlsError.Usage.ConnectionClosed
@@ -185,6 +174,7 @@ class TlsConnection internal constructor(
         is TlsProtocolException -> e.error
         is IllegalArgumentException, is IllegalStateException, is GeneralSecurityException, is IOException ->
             TlsError.Peer.ProcessingFailure(e)
+
         else -> throw e
     }
 

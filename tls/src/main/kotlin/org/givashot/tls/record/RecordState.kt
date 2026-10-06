@@ -15,5 +15,4 @@ internal sealed interface WriteProtection {
 internal class RecordState(
     var readProtection: ReadProtection = ReadProtection.Plaintext,
     var writeProtection: WriteProtection = WriteProtection.Plaintext,
-    var droppedChangeCipherSpecCount: Int = 0,
 )

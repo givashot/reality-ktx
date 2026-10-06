@@ -4,11 +4,15 @@ import org.givashot.tls.constant.TLS_AEAD_TAG_LENGTH
 import org.givashot.tls.constant.TLS_CONTENT_TYPE_APPLICATION_DATA_
 import org.givashot.tls.constant.TLS_CONTENT_TYPE_CCS
 import org.givashot.tls.constant.TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH
+import org.givashot.tls.constant.TLS_MAX_CONSECUTIVE_EMPTY_RECORDS
+import org.givashot.tls.connection.TlsError
+import org.givashot.tls.connection.TlsProtocolException
 import org.givashot.tls.crypto.TrafficKeys
 import org.givashot.tls.crypto.decryptTlsRecord
 import org.givashot.tls.crypto.encryptTlsRecord
 import org.givashot.tls.crypto.tlsRecord
 import java.io.ByteArrayOutputStream
+import java.security.GeneralSecurityException
 import java.util.*
 
 /** TLS record framing, protection and the current read/write [RecordState]. Knows nothing about handshake phases. */
@@ -19,6 +23,7 @@ internal class TlsRecordLayer(
     private val state: RecordState = RecordState()
     private val decoder = TlsRecordDecoder(maxRecordSize)
     private val pendingRecords = ArrayDeque<TlsRecordMessage>()
+    private var consecutiveEmptyRecords = 0
 
     private val plaintextInboundLimit = TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH + 2 * maxRecordSize
     private val plaintextInbound = ByteArrayOutputStream()
@@ -36,14 +41,12 @@ internal class TlsRecordLayer(
         pendingRecords.addAll(decoder.feed(bytes))
     }
 
-    fun nextRecord(): TlsRecordMessage? = pendingRecords.pollFirst()
-
     fun reset() {
         decoder.reset()
         pendingRecords.clear()
         state.readProtection = ReadProtection.Plaintext
         state.writeProtection = WriteProtection.Plaintext
-        state.droppedChangeCipherSpecCount = 0
+        consecutiveEmptyRecords = 0
     }
 
     fun installReadProtection(keys: TrafficKeys) {
@@ -56,26 +59,63 @@ internal class TlsRecordLayer(
         state.writeProtection = WriteProtection.Encrypted(keys)
     }
 
-    fun isChangeCipherSpec(record: TlsRecordMessage): Boolean =
-        record.contentType == TLS_CONTENT_TYPE_CCS
+    /**
+     * Next inbound record as an event, or null when none is queued. Decrypted lazily because the read keys are
+     * installed mid-connection. Empty records and CCS count towards [TLS_MAX_CONSECUTIVE_EMPTY_RECORDS]
+     * (BoringSSL behaviour); any non-empty record resets the count.
+     */
+    fun nextEvent(): TlsRecordEvent? {
+        val record = pendingRecords.pollFirst() ?: return null
+        if (record.contentType == TLS_CONTENT_TYPE_CCS) {
+            if (record.payload.size != 1 || record.payload[0] != 1.toByte()) {
+                throw TlsProtocolException(TlsError.Peer.InvalidChangeCipherSpec("malformed ChangeCipherSpec"))
+            }
+            countEmptyRecord()
+            return TlsRecordEvent.CompatibilityCcs
+        }
 
-    /** Accepts at most one well-formed compatibility CCS (RFC 8446 appendix D.4). Never touches sequence numbers. */
-    fun dropChangeCipherSpec(record: TlsRecordMessage): Boolean {
-        val wellFormed = record.payload.size == 1 && record.payload[0] == 1.toByte()
-        if (!wellFormed || state.droppedChangeCipherSpecCount >= 1) return false
-        state.droppedChangeCipherSpecCount++
-        return true
+        val type: Int
+        val payload: ByteArray
+        when (val protection = state.readProtection) {
+            ReadProtection.Plaintext -> {
+                type = record.contentType
+                payload = record.payload
+            }
+
+            is ReadProtection.Encrypted -> {
+                if (record.contentType != TLS_CONTENT_TYPE_APPLICATION_DATA_) {
+                    throw TlsProtocolException(
+                        TlsError.Peer.UnexpectedContentType(
+                            TLS_CONTENT_TYPE_APPLICATION_DATA_,
+                            record.contentType,
+                            "protected record"
+                        ),
+                    )
+                }
+                val keys = protection.keys
+                val decrypted = try {
+                    decryptTlsRecord(record.encodedRecord, keys.key, keys.iv, keys.sequenceNumber, keys.cipherSuite)
+                } catch (_: GeneralSecurityException) {
+                    throw TlsProtocolException(TlsError.Peer.BadRecordMac)
+                }
+                keys.sequenceNumber = checkedSequenceAfter(keys.sequenceNumber, 1)
+                type = decrypted.contentType
+                payload = decrypted.payload
+            }
+        }
+
+        if (payload.isEmpty()) {
+            countEmptyRecord()
+            return TlsRecordEvent.Empty(type)
+        }
+        consecutiveEmptyRecords = 0
+        return TlsRecordEvent.Content(type, payload)
     }
 
-    fun decode(record: TlsRecordMessage): TlsPlaintext {
-        return when (val protection = state.readProtection) {
-            ReadProtection.Plaintext -> TlsPlaintext(record.contentType, record.payload)
-            is ReadProtection.Encrypted -> {
-                val keys = protection.keys
-                val decrypted = decryptTlsRecord(record.encodedRecord, keys.key, keys.iv, keys.sequenceNumber, keys.cipherSuite)
-                keys.sequenceNumber = checkedSequenceAfter(keys.sequenceNumber, 1)
-                TlsPlaintext(decrypted.contentType, decrypted.payload)
-            }
+    private fun countEmptyRecord() {
+        consecutiveEmptyRecords++
+        if (consecutiveEmptyRecords > TLS_MAX_CONSECUTIVE_EMPTY_RECORDS) {
+            throw TlsProtocolException(TlsError.Peer.TooManyEmptyRecords(TLS_MAX_CONSECUTIVE_EMPTY_RECORDS))
         }
     }
 

@@ -17,7 +17,7 @@ sealed interface TlsState {
 
     data object Established : TlsState
 
-    data class Failed(val alert: TlsAlert, val error: TlsError.Peer) : TlsState
+    data class Failed(val alert: TlsAlert?, val error: TlsError.Peer) : TlsState
 
     data object Closed : TlsState
 }

@@ -1,5 +1,7 @@
 package org.givashot.tls.crypto
 
+import org.givashot.tls.connection.TlsError
+import org.givashot.tls.connection.TlsProtocolException
 import org.givashot.tls.constant.*
 import java.nio.ByteBuffer
 import java.security.MessageDigest
@@ -150,9 +152,15 @@ internal fun decryptTlsRecord(
     val inner = cipher.doFinal(ciphertext)
     var contentEnd = inner.size - 1
     while (contentEnd >= 0 && inner[contentEnd].toInt() == 0) contentEnd--
-    require(contentEnd >= 0)
+    // RFC 8446 section 5.4: an all-zero inner plaintext or an unknown inner type is unexpected_message.
+    if (contentEnd < 0) throw TlsProtocolException(TlsError.Peer.UnexpectedRecord(0, "protected record"))
     val contentType = inner[contentEnd].toInt() and 0xFF
-    require(contentType == TLS_CONTENT_TYPE_HANDSHAKE || contentType == TLS_CONTENT_TYPE_APPLICATION_DATA_)
+    if (contentType != TLS_CONTENT_TYPE_HANDSHAKE &&
+        contentType != TLS_CONTENT_TYPE_APPLICATION_DATA_ &&
+        contentType != TLS_CONTENT_TYPE_ALERT
+    ) {
+        throw TlsProtocolException(TlsError.Peer.UnexpectedRecord(contentType, "protected record"))
+    }
     return DecryptedTlsRecord(contentType, inner.copyOfRange(0, contentEnd))
 }
 

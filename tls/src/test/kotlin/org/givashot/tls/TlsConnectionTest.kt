@@ -5,7 +5,11 @@ import org.givashot.tls.connection.TlsConnection
 import org.givashot.tls.connection.TlsConnectionResult
 import org.givashot.tls.connection.TlsError
 import org.givashot.tls.connection.TlsEvent
+import org.givashot.tls.constant.TLS_CONTENT_TYPE_ALERT
+import org.givashot.tls.constant.TLS_CONTENT_TYPE_HANDSHAKE
+import org.givashot.tls.constant.TLS_MAX_CONSECUTIVE_EMPTY_RECORDS
 import org.givashot.tls.crypto.tlsHandshakeMessage
+import org.givashot.tls.crypto.tlsRecord
 import org.givashot.tls.handshake.EncryptedExtensionsData
 import org.givashot.tls.state.TlsState
 import kotlin.test.Test
@@ -102,12 +106,12 @@ class TlsConnectionTest {
     }
 
     @Test
-    fun `duplicate change cipher spec is rejected`() {
+    fun `repeated change cipher spec within the window is allowed`() {
         val client = TestTlsClient()
         val connection = TlsConnection.create(profile)
         afterServerFlight(client, connection)
-        val error = err(connection.receive(TestTlsClient.ccsRecord + TestTlsClient.ccsRecord))
-        assertIs<TlsError.Peer.InvalidChangeCipherSpec>(error)
+        ok(connection.receive(TestTlsClient.ccsRecord + TestTlsClient.ccsRecord))
+        assertEquals(TlsState.AwaitClientFinished, connection.state)
     }
 
     @Test
@@ -134,14 +138,53 @@ class TlsConnectionTest {
     }
 
     @Test
-    fun `input while waiting for server flight is a usage error`() {
+    fun `ccs while waiting for server flight is ignored`() {
         val client = TestTlsClient()
         val connection = TlsConnection.create(profile)
         ok(connection.receive(client.clientHelloRecord))
-        assertEquals(TlsError.Usage.InputWhileAwaitingServerFlight, err(connection.receive(byteArrayOf(1))))
+        ok(connection.receive(TestTlsClient.ccsRecord))
         assertEquals(TlsState.ProcessingClientHello, connection.state)
     }
 
+    @Test
+    fun `handshake data while waiting for server flight is rejected`() {
+        val client = TestTlsClient()
+        val connection = TlsConnection.create(profile)
+        ok(connection.receive(client.clientHelloRecord))
+        assertIs<TlsError.Peer.UnexpectedRecord>(err(connection.receive(tlsRecord(TLS_CONTENT_TYPE_HANDSHAKE, byteArrayOf(1)))))
+        assertIs<TlsState.Failed>(connection.state)
+    }
+
+    @Test
+    fun `ccs flood is capped`() {
+        val client = TestTlsClient()
+        val connection = TlsConnection.create(profile)
+        ok(connection.receive(client.clientHelloRecord))
+        repeat(TLS_MAX_CONSECUTIVE_EMPTY_RECORDS) { ok(connection.receive(TestTlsClient.ccsRecord)) }
+        assertIs<TlsError.Peer.TooManyEmptyRecords>(err(connection.receive(TestTlsClient.ccsRecord)))
+    }
+
+    @Test
+    fun `plaintext alerts are handled`() {
+        val close = TlsConnection.create(profile)
+        ok(close.receive(tlsRecord(TLS_CONTENT_TYPE_ALERT, byteArrayOf(1, 0))))
+        assertEquals(TlsState.Closed, close.state)
+
+        val fatal = TlsConnection.create(profile)
+        assertEquals(TlsError.Peer.AlertReceived(40), err(fatal.receive(tlsRecord(TLS_CONTENT_TYPE_ALERT, byteArrayOf(2, 40)))))
+        assertEquals(null, assertIs<TlsState.Failed>(fatal.state).alert)
+
+        val malformed = TlsConnection.create(profile)
+        assertIs<TlsError.Peer.MalformedAlert>(err(malformed.receive(tlsRecord(TLS_CONTENT_TYPE_ALERT, byteArrayOf(1)))))
+        val empty = TlsConnection.create(profile)
+        assertIs<TlsError.Peer.MalformedAlert>(err(empty.receive(tlsRecord(TLS_CONTENT_TYPE_ALERT, ByteArray(0)))))
+    }
+
+    @Test
+    fun `empty handshake record before client hello is rejected`() {
+        val connection = TlsConnection.create(profile)
+        assertIs<TlsError.Peer.UnexpectedRecord>(err(connection.receive(tlsRecord(TLS_CONTENT_TYPE_HANDSHAKE, ByteArray(0)))))
+    }
     @Test
     fun `commands are rejected in the wrong state`() {
         val connection = TlsConnection.create(profile)
