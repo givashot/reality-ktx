@@ -2,6 +2,7 @@ package org.givashot.tls
 
 import org.givashot.tls.constant.TLS_CONTENT_TYPE_APPLICATION_DATA_
 import org.givashot.tls.constant.TLS_CONTENT_TYPE_HANDSHAKE
+import org.givashot.tls.constant.TLS_HANDSHAKE_KEY_UPDATE_CONTENT_TYPE
 import org.givashot.tls.crypto.*
 import org.givashot.tls.handshake.CertificateData
 import java.security.KeyPairGenerator
@@ -88,10 +89,32 @@ internal class TestTlsClient(cipherSuiteId: Int = 0x1301) {
             return CertificateData(listOf(byteArrayOf(1, 2, 3)), privateKey, 0x0401, "SHA256withRSA")
         }
 
-        fun buildClientHello(clientPublicKey: ByteArray, cipherSuiteId: Int = 0x1301): ByteArray {
-            val keyShare = byteArrayOf(0, 36, 0, 29, 0, 32) + clientPublicKey
-            val keyShareExtension = byteArrayOf(0, 51, 0, 38) + keyShare
-            val extensions = byteArrayOf(0, keyShareExtension.size.toByte()) + keyShareExtension
+        fun buildClientHello(
+            clientPublicKey: ByteArray,
+            cipherSuiteId: Int = 0x1301,
+            tls13Supported: Boolean = true,
+            includeX25519KeyShare: Boolean = true,
+            keyShareGroup: Int = 29,
+        ): ByteArray {
+            val versionExtension = if (tls13Supported) {
+                byteArrayOf(0, 43, 0, 5, 4, 3, 4, 3, 3)
+            } else {
+                byteArrayOf(0, 43, 0, 3, 2, 3, 3)
+            }
+            val supportedGroupsExtension = byteArrayOf(
+                0, 10, 0, 4, 0, 2, (keyShareGroup ushr 8).toByte(), keyShareGroup.toByte(),
+            )
+            val keyShareExtension = if (includeX25519KeyShare) {
+                val keyShare = byteArrayOf(
+                    0, 36, (keyShareGroup ushr 8).toByte(), keyShareGroup.toByte(), 0, 32,
+                ) + clientPublicKey
+                byteArrayOf(0, 51, 0, 38) + keyShare
+            } else {
+                byteArrayOf()
+            }
+            val extensionData = versionExtension + supportedGroupsExtension + keyShareExtension
+            val extensions = byteArrayOf((extensionData.size ushr 8).toByte(), extensionData.size.toByte()) +
+                extensionData
             val body = byteArrayOf(3, 3) +
                 ByteArray(32) +
                 byteArrayOf(0, 0, 2, (cipherSuiteId ushr 8).toByte(), cipherSuiteId.toByte(), 1, 0) +
@@ -109,4 +132,44 @@ internal class TestTlsClient(cipherSuiteId: Int = 0x1301) {
             error("ServerHello has no x25519 key share")
         }
     }
+
+    fun encryptKeyUpdate(requestPeer: Boolean): ByteArray {
+        val record = encryptHandshake(
+            tlsHandshakeMessage(TLS_HANDSHAKE_KEY_UPDATE_CONTENT_TYPE, byteArrayOf(if (requestPeer) 1 else 0)),
+        )
+        writeKeys.update()
+        return record
+    }
+
+    fun encryptMalformedKeyUpdate(body: ByteArray): ByteArray =
+        encryptHandshake(tlsHandshakeMessage(TLS_HANDSHAKE_KEY_UPDATE_CONTENT_TYPE, body))
+
+    fun decryptKeyUpdate(record: ByteArray): Boolean {
+        val keys = checkNotNull(readKeys)
+        val decrypted = decryptTlsRecord(record, keys.key, keys.iv, keys.sequenceNumber++, suite)
+        check(decrypted.contentType == TLS_CONTENT_TYPE_HANDSHAKE)
+        check(
+            decrypted.payload.size == 5 &&
+                (decrypted.payload[0].toInt() and 0xFF) == TLS_HANDSHAKE_KEY_UPDATE_CONTENT_TYPE,
+        )
+        val requested = (decrypted.payload[4].toInt() and 0xFF) == 1
+        keys.update()
+        return requested
+    }
+
+    fun decryptAlert(record: ByteArray): ByteArray {
+        val keys = checkNotNull(readKeys)
+        val decrypted = decryptTlsRecord(record, keys.key, keys.iv, keys.sequenceNumber++, suite)
+        check(decrypted.contentType == org.givashot.tls.constant.TLS_CONTENT_TYPE_ALERT)
+        return decrypted.payload
+    }
+
+    fun encryptAlert(payload: ByteArray): ByteArray = encryptTlsRecord(
+        org.givashot.tls.constant.TLS_CONTENT_TYPE_ALERT,
+        payload,
+        writeKeys.key,
+        writeKeys.iv,
+        writeKeys.sequenceNumber++,
+        suite,
+    )
 }

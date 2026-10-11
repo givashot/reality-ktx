@@ -16,5 +16,8 @@ sealed interface TlsCommand {
         val recordLengths: List<Int>? = null,
     ) : TlsCommand
 
+    /** Sends a KeyUpdate under the current write keys, then rotates them. */
+    data class SendKeyUpdate(val requestPeer: Boolean = false) : TlsCommand
+
     data object Close : TlsCommand
 }

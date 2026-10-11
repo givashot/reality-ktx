@@ -59,6 +59,18 @@ internal class TlsRecordLayer(
         state.writeProtection = WriteProtection.Encrypted(keys)
     }
 
+    fun updateReadKeys() {
+        val protection = state.readProtection as? ReadProtection.Encrypted
+            ?: throw IllegalStateException("Read protection is not installed")
+        protection.keys.update()
+    }
+
+    fun updateWriteKeys() {
+        val protection = state.writeProtection as? WriteProtection.Encrypted
+            ?: throw IllegalStateException("Write protection is not installed")
+        protection.keys.update()
+    }
+
     /**
      * Next inbound record as an event, or null when none is queued. Decrypted lazily because the read keys are
      * installed mid-connection. Empty records and CCS count towards [TLS_MAX_CONSECUTIVE_EMPTY_RECORDS]

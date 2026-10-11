@@ -65,6 +65,96 @@ class TlsConnectionTest {
     }
 
     @Test
+    fun `client KeyUpdate with request rotates both directions and gets a response`() {
+        val (connection, client) = established()
+
+        val keyUpdate = client.encryptKeyUpdate(requestPeer = true)
+        val applicationData = client.encryptApplicationData("after update".toByteArray())
+        val update = ok(connection.receive(keyUpdate + applicationData))
+        assertEquals(1, update.outbound.size)
+        assertEquals(false, client.decryptKeyUpdate(update.outbound.single()))
+
+        assertContentEquals(
+            "after update".toByteArray(),
+            assertIs<TlsEvent.ClientApplicationData>(update.events.single()).data,
+        )
+        val outbound = ok(connection.execute(TlsCommand.SendApplicationData("reply".toByteArray())))
+        assertContentEquals(
+            "reply".toByteArray(),
+            client.decryptApplicationData(outbound.outbound.single()),
+        )
+    }
+
+    @Test
+    fun `client KeyUpdate without request updates read keys without response`() {
+        val (connection, client) = established()
+
+        val update = ok(connection.receive(client.encryptKeyUpdate(requestPeer = false)))
+        assertTrue(update.outbound.isEmpty())
+        val inbound = ok(connection.receive(client.encryptApplicationData("updated".toByteArray())))
+        assertContentEquals(
+            "updated".toByteArray(),
+            assertIs<TlsEvent.ClientApplicationData>(inbound.events.single()).data,
+        )
+    }
+
+    @Test
+    fun `server can initiate KeyUpdate and process client response`() {
+        val (connection, client) = established()
+
+        val update = ok(connection.execute(TlsCommand.SendKeyUpdate(requestPeer = true)))
+        assertEquals(1, update.outbound.size)
+        assertEquals(false, client.decryptKeyUpdate(update.outbound.single()))
+        ok(connection.receive(client.encryptKeyUpdate(requestPeer = false)))
+
+        val outbound = ok(connection.execute(TlsCommand.SendApplicationData("new keys".toByteArray())))
+        assertContentEquals("new keys".toByteArray(), client.decryptApplicationData(outbound.outbound.single()))
+    }
+
+    @Test
+    fun `malformed KeyUpdate returns an encrypted fatal alert`() {
+        val (connection, client) = established()
+        val result = connection.receive(client.encryptMalformedKeyUpdate(byteArrayOf(2)))
+        assertEquals(TlsError.Peer.InvalidKeyUpdateRequest, err(result))
+        val outbound = assertIs<TlsConnectionResult.Err>(result).outbound
+        assertEquals(1, outbound.size)
+        assertContentEquals(byteArrayOf(2, 47), client.decryptAlert(outbound.single()))
+    }
+
+    @Test
+    fun `ClientHello without TLS 1_3 support is returned for fallback`() {
+        val client = TestTlsClient()
+        val hello = TestTlsClient.buildClientHello(client.publicKey, tls13Supported = false)
+        val record = tlsRecord(TLS_CONTENT_TYPE_HANDSHAKE, hello)
+        val connection = TlsConnection.create(profile)
+
+        assertIs<TlsError.Peer.NegotiationFailed>(err(connection.receive(record)))
+        assertContentEquals(record, connection.unauthenticatedInboundBytes())
+    }
+
+    @Test
+    fun `ClientHello without X25519 key share is returned for fallback`() {
+        val client = TestTlsClient()
+        val hello = TestTlsClient.buildClientHello(client.publicKey, includeX25519KeyShare = false)
+        val record = tlsRecord(TLS_CONTENT_TYPE_HANDSHAKE, hello)
+        val connection = TlsConnection.create(profile)
+
+        assertIs<TlsError.Peer.NegotiationFailed>(err(connection.receive(record)))
+        assertContentEquals(record, connection.unauthenticatedInboundBytes())
+    }
+
+    @Test
+    fun `ClientHello with only a non X25519 key share is returned for fallback`() {
+        val client = TestTlsClient()
+        val hello = TestTlsClient.buildClientHello(client.publicKey, keyShareGroup = 23)
+        val record = tlsRecord(TLS_CONTENT_TYPE_HANDSHAKE, hello)
+        val connection = TlsConnection.create(profile)
+
+        assertIs<TlsError.Peer.NegotiationFailed>(err(connection.receive(record)))
+        assertContentEquals(record, connection.unauthenticatedInboundBytes())
+    }
+
+    @Test
     fun `client hello split across reads is reassembled`() {
         val client = TestTlsClient()
         val connection = TlsConnection.create(profile)
@@ -167,7 +257,9 @@ class TlsConnectionTest {
     @Test
     fun `plaintext alerts are handled`() {
         val close = TlsConnection.create(profile)
-        ok(close.receive(tlsRecord(TLS_CONTENT_TYPE_ALERT, byteArrayOf(1, 0))))
+        val closeResult = ok(close.receive(tlsRecord(TLS_CONTENT_TYPE_ALERT, byteArrayOf(1, 0))))
+        assertEquals(listOf(TlsEvent.ClientCloseNotify), closeResult.events)
+        assertContentEquals(tlsRecord(TLS_CONTENT_TYPE_ALERT, byteArrayOf(1, 0)), closeResult.outbound.single())
         assertEquals(TlsState.Closed, close.state)
 
         val fatal = TlsConnection.create(profile)
@@ -178,6 +270,35 @@ class TlsConnectionTest {
         assertIs<TlsError.Peer.MalformedAlert>(err(malformed.receive(tlsRecord(TLS_CONTENT_TYPE_ALERT, byteArrayOf(1)))))
         val empty = TlsConnection.create(profile)
         assertIs<TlsError.Peer.MalformedAlert>(err(empty.receive(tlsRecord(TLS_CONTENT_TYPE_ALERT, ByteArray(0)))))
+    }
+
+    @Test
+    fun `close sends a protected close notify after handshake`() {
+        val (connection, client) = established()
+        val result = ok(connection.execute(TlsCommand.Close))
+
+        assertEquals(TlsState.Closed, connection.state)
+        assertContentEquals(byteArrayOf(1, 0), client.decryptAlert(result.outbound.single()))
+    }
+
+    @Test
+    fun `encrypted client close notify gets a protected server response`() {
+        val (connection, client) = established()
+        val result = ok(connection.receive(client.encryptAlert(byteArrayOf(1, 0))))
+
+        assertEquals(TlsState.Closed, connection.state)
+        assertEquals(listOf(TlsEvent.ClientCloseNotify), result.events)
+        assertContentEquals(byteArrayOf(1, 0), client.decryptAlert(result.outbound.single()))
+    }
+
+    @Test
+    fun `fatal protocol errors return protected TLS alert`() {
+        val (connection, client) = established()
+        val result = connection.receive(client.encryptHandshake(tlsHandshakeMessage(1, byteArrayOf())))
+        assertIs<TlsError.Peer.UnexpectedHandshakeType>(err(result))
+        val outbound = assertIs<TlsConnectionResult.Err>(result).outbound
+
+        assertContentEquals(byteArrayOf(2, 10), client.decryptAlert(outbound.single()))
     }
 
     @Test

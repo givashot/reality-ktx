@@ -5,6 +5,7 @@ import org.givashot.tls.connection.TlsError
 import org.givashot.tls.connection.TlsProtocolException
 import org.givashot.tls.constant.TLS_HANDSHAKE_HEADER_LENGTH
 import java.io.ByteArrayInputStream
+import java.io.IOException
 import java.nio.charset.Charset
 import java.util.*
 
@@ -50,6 +51,15 @@ data class ClientHelloWrapper(
             null
         } catch (_: Exception) {
             null
+        }
+    }
+
+    val supportsTls13: Boolean by lazy {
+        try {
+            TlsExtensionsUtils.getSupportedVersionsExtensionClient(base.extensions)
+                ?.any { it == ProtocolVersion.TLSv13 } == true
+        } catch (_: IOException) {
+            false
         }
     }
 

@@ -11,6 +11,9 @@ import java.util.*
 
 /** Cheap, crypto-free negotiation. Failure means the ClientHello is not for us. */
 internal fun negotiate(clientHello: ClientHelloWrapper, profile: ServerProfile): NegotiatedParameters {
+    if (!clientHello.supportsTls13) {
+        throw TlsProtocolException(TlsError.Peer.NegotiationFailed("Client does not support TLS 1.3"))
+    }
     val clientSuites = clientHello.base.cipherSuites
     val cipherSuiteId = when (profile.cipherSelection) {
         ServerProfile.CipherSelectionMode.CLIENT_PREFERENCE ->

@@ -14,6 +14,14 @@ sealed interface TlsError {
             override val description get() = "Unexpected handshake type $actual (expected $expected)"
         }
 
+        data class MalformedKeyUpdate(val reason: String) : Peer {
+            override val description get() = "Malformed KeyUpdate: $reason"
+        }
+
+        data object InvalidKeyUpdateRequest : Peer {
+            override val description get() = "KeyUpdate has an invalid request value"
+        }
+
         data class UnexpectedExtraHandshakeData(val context: String) : Peer {
             override val description get() = "Unexpected extra handshake data: $context"
         }

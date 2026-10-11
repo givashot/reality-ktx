@@ -21,18 +21,24 @@ enum class TlsAlert(val code: Int) {
         internal fun forError(error: TlsError.Peer): TlsAlert? = when (error) {
             is TlsError.Peer.AlertReceived -> null
             is TlsError.Peer.MalformedAlert -> DECODE_ERROR
-            TlsError.Peer.BadRecordMac -> BAD_RECORD_MAC
+            is TlsError.Peer.BadRecordMac -> BAD_RECORD_MAC
+
             is TlsError.Peer.TooManyEmptyRecords,
             is TlsError.Peer.UnexpectedRecord,
             is TlsError.Peer.UnexpectedContentType,
             is TlsError.Peer.UnexpectedHandshakeType,
             is TlsError.Peer.UnexpectedExtraHandshakeData,
             is TlsError.Peer.InvalidChangeCipherSpec -> UNEXPECTED_MESSAGE
+
+            is TlsError.Peer.MalformedKeyUpdate -> DECODE_ERROR
+            is TlsError.Peer.InvalidKeyUpdateRequest -> ILLEGAL_PARAMETER
+
             is TlsError.Peer.ClientHelloTooLarge,
             is TlsError.Peer.MalformedClientHello -> DECODE_ERROR
+
             is TlsError.Peer.NegotiationFailed -> HANDSHAKE_FAILURE
-            TlsError.Peer.ClientFinishedVerificationFailed -> DECRYPT_ERROR
-            is TlsError.Peer.ProcessingFailure -> ILLEGAL_PARAMETER
+            is TlsError.Peer.ClientFinishedVerificationFailed -> DECRYPT_ERROR
+            is TlsError.Peer.ProcessingFailure -> INTERNAL_ERROR
         }
     }
 }

@@ -124,11 +124,11 @@ class TlsStateMachineTest {
     }
 
     @Test
-    fun `established accepts application data and empty application data only`() {
+    fun `established accepts application data and post handshake records`() {
         val s = TlsState.Established
         assertIs<TlsDecision.ApplicationData>(decision(s, content(TLS_CONTENT_TYPE_APPLICATION_DATA_)))
         assertEquals(TlsDecision.Ignore, decision(s, TlsRecordEvent.Empty(TLS_CONTENT_TYPE_APPLICATION_DATA_)))
-        assertIs<TlsDecision.Reject>(decision(s, content(TLS_CONTENT_TYPE_HANDSHAKE)))
+        assertIs<TlsDecision.HandshakeFragment>(decision(s, content(TLS_CONTENT_TYPE_HANDSHAKE)))
         assertIs<TlsDecision.Reject>(decision(s, TlsRecordEvent.Empty(TLS_CONTENT_TYPE_HANDSHAKE)))
         assertEquals(
             TlsDecision.Reject(TlsError.Peer.MalformedAlert(0)),

@@ -9,7 +9,9 @@ internal data class ApplicationTrafficSecrets(
     val clientWriteIv: ByteArray,
     val cipherSuite: CipherSuite,
 ) {
-    fun clientTrafficKeys(): TrafficKeys = TrafficKeys(clientWriteKey, clientWriteIv, cipherSuite)
+    fun clientTrafficKeys(): TrafficKeys =
+        TrafficKeys(clientWriteKey, clientWriteIv, cipherSuite, trafficSecret = clientAppTrafficSecret)
 
-    fun serverTrafficKeys(): TrafficKeys = TrafficKeys(serverWriteKey, serverWriteIv, cipherSuite)
+    fun serverTrafficKeys(): TrafficKeys =
+        TrafficKeys(serverWriteKey, serverWriteIv, cipherSuite, trafficSecret = serverAppTrafficSecret)
 }

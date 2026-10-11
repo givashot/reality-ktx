@@ -4,6 +4,8 @@ import io.netty.buffer.Unpooled
 import io.netty.buffer.ByteBuf
 import io.netty.channel.ChannelHandler
 import io.netty.channel.ChannelHandlerContext
+import io.netty.channel.ChannelFuture
+import io.netty.channel.ChannelFutureListener
 import io.netty.handler.codec.ByteToMessageDecoder
 import io.netty.handler.timeout.ReadTimeoutException
 import io.netty.handler.timeout.ReadTimeoutHandler
@@ -40,17 +42,30 @@ class RealityTlsConnectionHandler(
 
         when (val result = connection.receive(bytes)) {
             is TlsConnectionResult.Ok -> processResult(ctx, result)
-            is TlsConnectionResult.Err -> handleError(ctx, result.error, "receiving client data")
+            is TlsConnectionResult.Err ->
+                handleError(ctx, result.error, "receiving client data", result.outbound)
         }
     }
 
-    private fun handleError(ctx: ChannelHandlerContext, error: TlsError, action: String) {
+    private fun handleError(
+        ctx: ChannelHandlerContext,
+        error: TlsError,
+        action: String,
+        outbound: List<ByteArray> = emptyList(),
+    ) {
         val cause = RuntimeException(error.description)
         when (error) {
             is TlsError.Peer -> {
                 logger.log(Level.FINE, "TLS peer error: ${error.description}")
-                if (authenticated) close(ctx, "TLS peer error while $action", cause)
-                else switchToFallback(ctx, "malformed or unsupported TLS ClientHello", cause)
+                if (!authenticated) {
+                    switchToFallback(ctx, "malformed or unsupported TLS ClientHello", cause)
+                } else if (outbound.isNotEmpty()) {
+                    writeOutbound(ctx, outbound)?.addListener(
+                        ChannelFutureListener { close(ctx, "TLS alert sent after $action", cause) },
+                    ) ?: close(ctx, "TLS peer error while $action", cause)
+                } else {
+                    close(ctx, "TLS peer error while $action", cause)
+                }
             }
             is TlsError.Usage -> {
                 logger.log(Level.WARNING, "TLS usage error: ${error.description}")
@@ -60,9 +75,7 @@ class RealityTlsConnectionHandler(
     }
 
     private fun processResult(ctx: ChannelHandlerContext, result: TlsConnectionResult.Ok) {
-        if (result.outbound.isNotEmpty()) {
-            ctx.writeAndFlush(Unpooled.wrappedBuffer(*result.outbound.toTypedArray()))
-        }
+        val writeFuture = writeOutbound(ctx, result.outbound)
         for (event in result.events) {
             if (switchedToFallback) return
             when (event) {
@@ -76,8 +89,23 @@ class RealityTlsConnectionHandler(
 
                 is TlsEvent.ClientFinished -> Unit
                 is TlsEvent.ClientApplicationData -> ctx.fireChannelRead(Unpooled.wrappedBuffer(event.data))
+                is TlsEvent.ClientCloseNotify -> closeAfterWrite(
+                    ctx,
+                    writeFuture,
+                    "Client sent close_notify",
+                )
             }
         }
+    }
+
+    private fun writeOutbound(ctx: ChannelHandlerContext, records: List<ByteArray>): ChannelFuture? =
+        if (records.isEmpty()) null
+        else ctx.writeAndFlush(Unpooled.wrappedBuffer(*records.toTypedArray()))
+
+    private fun closeAfterWrite(ctx: ChannelHandlerContext, writeFuture: ChannelFuture?, reason: String) {
+        val cause = RuntimeException(reason)
+        if (writeFuture == null) close(ctx, reason, cause)
+        else writeFuture.addListener(ChannelFutureListener { close(ctx, reason, cause) })
     }
 
     private fun sendServerFlight(ctx: ChannelHandlerContext, authKey: ByteArray) {
@@ -88,7 +116,8 @@ class RealityTlsConnectionHandler(
                 TlsCommand.SendServerFlight(EncryptedExtensionsData(), certificate),
             )) {
                 is TlsConnectionResult.Ok -> processResult(ctx, result)
-                is TlsConnectionResult.Err -> handleError(ctx, result.error, "building server flight")
+                is TlsConnectionResult.Err ->
+                    handleError(ctx, result.error, "building server flight", result.outbound)
             }
         } catch (cause: Exception) {
             close(ctx, "Could not build or send TLS server flight", cause)

@@ -32,10 +32,13 @@ internal class TlsStateMachine(initialState: TlsState = TlsState.AwaitClientHell
     fun accept(event: TlsRecordEvent): TlsDecision {
         val phase = state.toString()
         check(!state.shutdown()) { "Record event in state $phase" }
-        val acceptsHandshake = state == TlsState.AwaitClientHello ||
-                state == TlsState.AwaitClientHandshake || state == TlsState.AwaitClientFinished
-        val acceptsCcs = state == TlsState.ProcessingClientHello ||
-                state == TlsState.AwaitClientHandshake || state == TlsState.AwaitClientFinished
+        val acceptsHandshake = state == TlsState.AwaitClientHello
+                || state == TlsState.AwaitClientHandshake
+                || state == TlsState.AwaitClientFinished
+                || state == TlsState.Established
+        val acceptsCcs = state == TlsState.ProcessingClientHello
+                || state == TlsState.AwaitClientHandshake
+                || state == TlsState.AwaitClientFinished
         val acceptsApplicationData = state == TlsState.Established
 
         return when (event) {
@@ -53,15 +56,6 @@ internal class TlsStateMachine(initialState: TlsState = TlsState.AwaitClientHell
                 TLS_CONTENT_TYPE_ALERT -> TlsDecision.Alert(event.payload)
                 TLS_CONTENT_TYPE_HANDSHAKE -> when {
                     acceptsHandshake -> TlsDecision.HandshakeFragment(event.payload)
-                    state == TlsState.Established ->
-                        TlsDecision.Reject(
-                            TlsError.Peer.UnexpectedContentType(
-                                TLS_CONTENT_TYPE_APPLICATION_DATA_,
-                                event.type,
-                                phase
-                            )
-                        )
-
                     else -> TlsDecision.Reject(TlsError.Peer.UnexpectedRecord(event.type, phase))
                 }
 

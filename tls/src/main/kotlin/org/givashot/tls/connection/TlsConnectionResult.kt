@@ -7,5 +7,9 @@ sealed interface TlsConnectionResult {
         val outbound: List<ByteArray> = emptyList(),
     ) : TlsConnectionResult
 
-    data class Err(val error: TlsError) : TlsConnectionResult
+    /** Protocol errors may still carry a fatal alert that must be written before closing the transport. */
+    data class Err(
+        val error: TlsError,
+        val outbound: List<ByteArray> = emptyList(),
+    ) : TlsConnectionResult
 }
