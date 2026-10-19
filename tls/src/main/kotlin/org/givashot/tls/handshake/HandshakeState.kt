@@ -9,6 +9,7 @@ import org.givashot.tls.crypto.Tls13KeySchedule
 internal class HandshakeState {
     val clientHelloDecoder = HandshakeMessageDecoder(TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH)
     val clientFinishedDecoder = HandshakeMessageDecoder()
+    val postHandshakeDecoder = HandshakeMessageDecoder()
     val transcript = TranscriptHash()
 
     var clientHello: ClientHelloWrapper? = null
@@ -23,6 +24,7 @@ internal class HandshakeState {
     fun reset() {
         clientHelloDecoder.reset()
         clientFinishedDecoder.reset()
+        postHandshakeDecoder.reset()
         clientHello = null
         negotiated = null
         keySchedule = null

@@ -1,25 +1,18 @@
 package org.givashot.tls.handshake
 
 import org.givashot.tls.ServerProfile
-import org.givashot.tls.connection.TlsError
-import org.givashot.tls.connection.TlsProtocolException
-import org.givashot.tls.constant.TLS_HANDSHAKE_CLIENT_HELLO_CONTENT_TYPE
-import org.givashot.tls.constant.TLS_HANDSHAKE_FINISH_CONTENT_TYPE
-import org.givashot.tls.constant.TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH
+import org.givashot.tls.connection.*
+import org.givashot.tls.constant.*
 import org.givashot.tls.crypto.ApplicationTrafficSecrets
 import org.givashot.tls.crypto.HandshakeTrafficSecrets
 import org.givashot.tls.crypto.Tls13KeySchedule
-
-internal class ServerFlight(
-    val serverHello: ByteArray,
-    val encodedHandshakes: ByteArray,
-)
+import org.givashot.tls.crypto.tlsHandshakeMessage
 
 /**
  * TLS 1.3 server handshake: negotiation, transcript, key schedule and handshake messages.
  * Produces handshake bytes and secrets; framing, protection and lifecycle belong to other components.
  */
-internal class Tls13ServerHandshake(
+internal class Tls13ServerHandshakeCodec(
     private val profile: ServerProfile,
     private val state: HandshakeState = HandshakeState(),
 ) {
@@ -35,17 +28,15 @@ internal class Tls13ServerHandshake(
     fun onClientHelloFragment(fragment: ByteArray): ClientHelloWrapper? {
         val messages = state.clientHelloDecoder.feed(fragment)
         if (messages.size > 1 || (messages.isNotEmpty() && state.clientHelloDecoder.bufferedByteCount != 0)) {
-            throw TlsProtocolException(TlsError.Peer.UnexpectedExtraHandshakeData("ClientHello"))
+            throw UnexpectedExtraHandshakeDataException("ClientHello")
         }
         val message = messages.singleOrNull() ?: return null
         if (message.type != TLS_HANDSHAKE_CLIENT_HELLO_CONTENT_TYPE) {
-            throw TlsProtocolException(
-                TlsError.Peer.UnexpectedHandshakeType(TLS_HANDSHAKE_CLIENT_HELLO_CONTENT_TYPE, message.type),
-            )
+            throw UnexpectedHandshakeTypeException(TLS_HANDSHAKE_CLIENT_HELLO_CONTENT_TYPE, message.type)
         }
         if (message.encodedBytes.size > TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH) {
-            throw TlsProtocolException(
-                TlsError.Peer.ClientHelloTooLarge(message.encodedBytes.size, TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH),
+            throw DecodeErrorException(
+                "ClientHello size $message.encodedBytes.size exceeds limit $TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH"
             )
         }
         return ClientHelloWrapper.parse(message.encodedBytes).also { state.clientHello = it }
@@ -63,7 +54,6 @@ internal class Tls13ServerHandshake(
         encryptedExtensions: EncryptedExtensionsData,
         certificate: CertificateData,
     ): ServerFlight {
-        require(certificate.certificateChain.isNotEmpty()) { "Server certificate chain is empty" }
         val hello = checkNotNull(state.clientHello) { "ClientHello has not been received" }
         val negotiated = checkNotNull(state.negotiated) { "Parameters have not been negotiated" }
         val suite = negotiated.cipherSuite
@@ -109,13 +99,11 @@ internal class Tls13ServerHandshake(
     fun onClientFinishedFragment(fragment: ByteArray): Boolean {
         val messages = state.clientFinishedDecoder.feed(fragment)
         if (messages.size > 1 || (messages.isNotEmpty() && state.clientFinishedDecoder.bufferedByteCount != 0)) {
-            throw TlsProtocolException(TlsError.Peer.UnexpectedExtraHandshakeData("ClientFinished"))
+            throw UnexpectedExtraHandshakeDataException("ClientFinished")
         }
         val message = messages.singleOrNull() ?: return false
         if (message.type != TLS_HANDSHAKE_FINISH_CONTENT_TYPE) {
-            throw TlsProtocolException(
-                TlsError.Peer.UnexpectedHandshakeType(TLS_HANDSHAKE_FINISH_CONTENT_TYPE, message.type),
-            )
+            throw UnexpectedHandshakeTypeException(TLS_HANDSHAKE_FINISH_CONTENT_TYPE, message.type)
         }
         val keySchedule = checkNotNull(state.keySchedule) { "Server flight has not been built" }
         val verified = keySchedule.verifyClientFinished(
@@ -123,8 +111,39 @@ internal class Tls13ServerHandshake(
             handshakeTrafficSecrets.clientHandshakeTrafficSecret,
             checkNotNull(state.serverFinishedTranscriptHash),
         )
-        if (!verified) throw TlsProtocolException(TlsError.Peer.ClientFinishedVerificationFailed)
+        if (!verified) throw ClientFinishedVerificationFailedException()
         state.transcript.update(message.encodedBytes)
         return true
+    }
+
+    fun encodeKeyUpdate(requestPeer: Boolean): ByteArray =
+        tlsHandshakeMessage(
+            TLS_HANDSHAKE_KEY_UPDATE_CONTENT_TYPE,
+            byteArrayOf(if (requestPeer) 1 else 0),
+        )
+
+    fun handleKeyUpdate(payload: ByteArray): KeyUpdate? {
+        val handshakeDecoder = state.postHandshakeDecoder
+        val messages = try {
+            handshakeDecoder.feed(payload)
+        } catch (_: IllegalArgumentException) {
+            throw DecodeErrorException("message exceeds the maximum size")
+        }
+        if (messages.size > 1 || (messages.size == 1 && handshakeDecoder.bufferedByteCount != 0)) {
+            throw UnexpectMessageException("Unexpected extra handshake data: KeyUpdate")
+        }
+        val message = messages.singleOrNull() ?: return null
+        if (message.type != TLS_HANDSHAKE_KEY_UPDATE_CONTENT_TYPE) {
+            throw UnexpectedHandshakeTypeException(TLS_HANDSHAKE_KEY_UPDATE_CONTENT_TYPE, message.type)
+        }
+        if (message.body.size != 1) {
+            throw DecodeErrorException("Malformed KeyUpdate: body must contain exactly one byte")
+        }
+        val requestUpdate = message.body[0].toInt() and 0xFF
+        if (requestUpdate == TLS_HANDSHAKE_KEY_UPDATE_NOT_REQUESTED || requestUpdate == TLS_HANDSHAKE_KEY_UPDATE_REQUESTED) {
+            return KeyUpdate(requestUpdate)
+        } else {
+            throw IllegalParameterException("KeyUpdate has an invalid request value: $requestUpdate")
+        }
     }
 }

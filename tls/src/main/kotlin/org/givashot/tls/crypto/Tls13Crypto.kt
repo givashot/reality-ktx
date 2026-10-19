@@ -1,7 +1,6 @@
 package org.givashot.tls.crypto
 
-import org.givashot.tls.connection.TlsError
-import org.givashot.tls.connection.TlsProtocolException
+import org.givashot.tls.connection.UnexpectedRecordException
 import org.givashot.tls.constant.*
 import java.nio.ByteBuffer
 import java.security.MessageDigest
@@ -105,7 +104,7 @@ internal fun encryptTlsRecord(
     require(sequenceNumber >= 0)
     require(paddingLength >= 0)
     val inner = plaintext + contentType.toByte() + ByteArray(paddingLength)
-    val ciphertextLength = inner.size + TLS_AEAD_TAG_LENGTH
+    val ciphertextLength = TLS_AEAD_TAG_LENGTH + inner.size
     require(ciphertextLength <= 0xFFFF) { "TLS ciphertext record is too large" }
     val header = byteArrayOf(
         TLS_CONTENT_TYPE_APPLICATION_DATA_.toByte(),
@@ -153,13 +152,13 @@ internal fun decryptTlsRecord(
     var contentEnd = inner.size - 1
     while (contentEnd >= 0 && inner[contentEnd].toInt() == 0) contentEnd--
     // RFC 8446 section 5.4: an all-zero inner plaintext or an unknown inner type is unexpected_message.
-    if (contentEnd < 0) throw TlsProtocolException(TlsError.Peer.UnexpectedRecord(0, "protected record"))
+    if (contentEnd < 0) throw UnexpectedRecordException(0, "protected record")
     val contentType = inner[contentEnd].toInt() and 0xFF
     if (contentType != TLS_CONTENT_TYPE_HANDSHAKE &&
         contentType != TLS_CONTENT_TYPE_APPLICATION_DATA_ &&
         contentType != TLS_CONTENT_TYPE_ALERT
     ) {
-        throw TlsProtocolException(TlsError.Peer.UnexpectedRecord(contentType, "protected record"))
+        throw UnexpectedRecordException(contentType, "protected record")
     }
     return DecryptedTlsRecord(contentType, inner.copyOfRange(0, contentEnd))
 }

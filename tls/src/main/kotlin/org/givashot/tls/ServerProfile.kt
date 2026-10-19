@@ -11,15 +11,12 @@ data class ServerProfile(
     val sendChangeCipherSpec: Boolean = false,
     /** 预留:ServerHello 扩展顺序。本期不实现,只允许 null(表示沿用现有行为) */
     val extensionOrder: List<Int>? = null,
-    /** 加密握手 flight(以及见下文说明的应用数据)的目标记录长度画像,由 app-server 从目标站学习 */
-    val recordLengths: List<Int>,
     /** 入站记录(含 5 字节记录头)大小上限 */
     val maxRecordSize: Int = TLS_MAX_RECORD_SIZE,
 ) {
     init {
         require(cipherSuites.isNotEmpty())
         require(cipherSuites.all { it in DEFAULT_CIPHER_SUITES })
-        require(recordLengths.isNotEmpty())
         require(maxRecordSize > TLS_RECORD_HEADER_LENGTH)
         require(!sendChangeCipherSpec) { "sendChangeCipherSpec is reserved and not supported yet" }
         require(extensionOrder == null) { "extensionOrder is reserved and not supported yet" }

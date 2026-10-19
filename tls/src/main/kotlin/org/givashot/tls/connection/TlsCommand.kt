@@ -8,7 +8,7 @@ sealed interface TlsCommand {
     data class SendServerFlight(
         val encryptedExtensions: EncryptedExtensionsData,
         val certificate: CertificateData,
-        val recordLengths: List<Int>? = null,
+        val recordLengths: List<Int>,
     ) : TlsCommand
 
     data class SendApplicationData(

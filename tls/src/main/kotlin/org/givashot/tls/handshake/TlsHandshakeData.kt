@@ -13,3 +13,7 @@ data class CertificateData(
     val jcaSignatureAlgorithm: String,
 )
 
+class ServerFlight(
+    val serverHello: ByteArray,
+    val encodedHandshakes: ByteArray,
+)

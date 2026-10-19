@@ -1,44 +1,20 @@
 package org.givashot.tls.state
 
-import org.givashot.tls.connection.TlsError
-
 enum class TlsAlert(val code: Int) {
+    // if receive a close notify, we should send a close notify to peer, then close connection
     CLOSE_NOTIFY(0),
+
+    // directly close connection
+    USER_CANCELED(90),
+
+    /* FATAL ALERT BEGIN */
+    // directly close connection
     UNEXPECTED_MESSAGE(10),
     BAD_RECORD_MAC(20),
     HANDSHAKE_FAILURE(40),
     ILLEGAL_PARAMETER(47),
     DECODE_ERROR(50),
     DECRYPT_ERROR(51),
-    INTERNAL_ERROR(80),
-    USER_CANCELED(90);
-
-    companion object {
-        const val CLOSE_NOTIFY_CODE = 0
-        const val USER_CANCELED_CODE = 90
-
-        /** The alert we would send for [error]; null when the peer already terminated the connection. */
-        internal fun forError(error: TlsError.Peer): TlsAlert? = when (error) {
-            is TlsError.Peer.AlertReceived -> null
-            is TlsError.Peer.MalformedAlert -> DECODE_ERROR
-            is TlsError.Peer.BadRecordMac -> BAD_RECORD_MAC
-
-            is TlsError.Peer.TooManyEmptyRecords,
-            is TlsError.Peer.UnexpectedRecord,
-            is TlsError.Peer.UnexpectedContentType,
-            is TlsError.Peer.UnexpectedHandshakeType,
-            is TlsError.Peer.UnexpectedExtraHandshakeData,
-            is TlsError.Peer.InvalidChangeCipherSpec -> UNEXPECTED_MESSAGE
-
-            is TlsError.Peer.MalformedKeyUpdate -> DECODE_ERROR
-            is TlsError.Peer.InvalidKeyUpdateRequest -> ILLEGAL_PARAMETER
-
-            is TlsError.Peer.ClientHelloTooLarge,
-            is TlsError.Peer.MalformedClientHello -> DECODE_ERROR
-
-            is TlsError.Peer.NegotiationFailed -> HANDSHAKE_FAILURE
-            is TlsError.Peer.ClientFinishedVerificationFailed -> DECRYPT_ERROR
-            is TlsError.Peer.ProcessingFailure -> INTERNAL_ERROR
-        }
-    }
+    INTERNAL_ERROR(80);
+    /* FATAL ALERT END */
 }

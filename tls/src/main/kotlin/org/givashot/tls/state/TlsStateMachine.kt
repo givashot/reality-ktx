@@ -1,26 +1,24 @@
 package org.givashot.tls.state
 
-import org.givashot.tls.connection.TlsError
+import org.givashot.tls.connection.DecodeErrorException
+import org.givashot.tls.connection.UnexpectMessageException
+import org.givashot.tls.connection.UnexpectedContentTypeException
+import org.givashot.tls.connection.UnexpectedRecordException
 import org.givashot.tls.constant.TLS_CONTENT_TYPE_ALERT
 import org.givashot.tls.constant.TLS_CONTENT_TYPE_APPLICATION_DATA_
 import org.givashot.tls.constant.TLS_CONTENT_TYPE_HANDSHAKE
 import org.givashot.tls.record.TlsRecordEvent
 
-/** The state machine's verdict on a record event. */
-internal sealed interface TlsDecision {
-    data object Ignore : TlsDecision
-    class HandshakeFragment(val payload: ByteArray) : TlsDecision
-    class ApplicationData(val payload: ByteArray) : TlsDecision
-    class Alert(val payload: ByteArray) : TlsDecision
-    data class Reject(val error: TlsError.Peer) : TlsDecision
-}
-
 internal class TlsStateMachine(initialState: TlsState = TlsState.AwaitClientHello) {
+
     private var state: TlsState = initialState
+
+    val closed: Boolean get() = state is TlsState.Closed
 
     fun currentState(): TlsState = state
 
     fun transitionTo(next: TlsState) {
+        throwIfClosed("transition to next state $next")
         check(isValidTransition(state, next)) { "Invalid TLS state transition: $state -> $next" }
         state = next
     }
@@ -30,75 +28,67 @@ internal class TlsStateMachine(initialState: TlsState = TlsState.AwaitClientHell
      * handshake or alert bytes; the caller acts on the decision.
      */
     fun accept(event: TlsRecordEvent): TlsDecision {
+        throwIfClosed("accept tls record event")
         val phase = state.toString()
-        check(!state.shutdown()) { "Record event in state $phase" }
         val acceptsHandshake = state == TlsState.AwaitClientHello
-                || state == TlsState.AwaitClientHandshake
                 || state == TlsState.AwaitClientFinished
                 || state == TlsState.Established
         val acceptsCcs = state == TlsState.ProcessingClientHello
-                || state == TlsState.AwaitClientHandshake
                 || state == TlsState.AwaitClientFinished
         val acceptsApplicationData = state == TlsState.Established
 
         return when (event) {
             TlsRecordEvent.CompatibilityCcs ->
                 if (acceptsCcs) TlsDecision.Ignore
-                else TlsDecision.Reject(TlsError.Peer.InvalidChangeCipherSpec("unexpected ChangeCipherSpec in state $phase"))
+                else TlsDecision.Reject(UnexpectMessageException("unexpected ChangeCipherSpec in state $phase"))
 
             is TlsRecordEvent.Empty -> when {
-                event.type == TLS_CONTENT_TYPE_ALERT -> TlsDecision.Reject(TlsError.Peer.MalformedAlert(0))
+                event.type == TLS_CONTENT_TYPE_ALERT -> TlsDecision.Reject(DecodeErrorException("Malformed alert of length 0"))
                 event.type == TLS_CONTENT_TYPE_APPLICATION_DATA_ && acceptsApplicationData -> TlsDecision.Ignore
-                else -> TlsDecision.Reject(TlsError.Peer.UnexpectedRecord(event.type, phase))
+                else -> TlsDecision.Reject(UnexpectedRecordException(event.type, phase))
             }
 
             is TlsRecordEvent.Content -> when (event.type) {
-                TLS_CONTENT_TYPE_ALERT -> TlsDecision.Alert(event.payload)
+                TLS_CONTENT_TYPE_ALERT -> TlsDecision.ClientAlert
                 TLS_CONTENT_TYPE_HANDSHAKE -> when {
-                    acceptsHandshake -> TlsDecision.HandshakeFragment(event.payload)
-                    else -> TlsDecision.Reject(TlsError.Peer.UnexpectedRecord(event.type, phase))
+                    acceptsHandshake -> TlsDecision.HandshakeFragment
+                    else -> TlsDecision.Reject(UnexpectedRecordException(event.type, phase))
                 }
 
                 TLS_CONTENT_TYPE_APPLICATION_DATA_ -> when {
-                    acceptsApplicationData -> TlsDecision.ApplicationData(event.payload)
+                    acceptsApplicationData -> TlsDecision.ApplicationData
                     acceptsHandshake ->
                         TlsDecision.Reject(
-                            TlsError.Peer.UnexpectedContentType(
+                            UnexpectedContentTypeException(
                                 TLS_CONTENT_TYPE_HANDSHAKE,
                                 event.type,
                                 phase
                             )
                         )
 
-                    else -> TlsDecision.Reject(TlsError.Peer.UnexpectedRecord(event.type, phase))
+                    else -> TlsDecision.Reject(UnexpectedRecordException(event.type, phase))
                 }
 
-                else -> TlsDecision.Reject(TlsError.Peer.UnexpectedRecord(event.type, phase))
+                else -> TlsDecision.Reject(UnexpectedRecordException(event.type, phase))
             }
         }
     }
 
-    /** No-op when already Failed or Closed. */
-    fun fail(error: TlsError.Peer) {
-        if (state is TlsState.Failed || state is TlsState.Closed) return
-        transitionTo(TlsState.Failed(TlsAlert.forError(error), error))
+    fun throwIfClosed(operation: String) {
+        if (closed) {
+            throw IllegalStateException("$operation is not valid in state closed")
+        }
     }
 
-    /** Idempotent. */
-    fun close() {
-        if (state is TlsState.Closed) return
-        transitionTo(TlsState.Closed)
+    fun close(error: Throwable?) {
+        transitionTo(TlsState.Closed(error))
     }
 
     private fun isValidTransition(from: TlsState, to: TlsState): Boolean = when (to) {
         TlsState.AwaitClientHello -> false
         TlsState.ProcessingClientHello -> from == TlsState.AwaitClientHello
-        TlsState.AwaitClientHandshake -> from == TlsState.ProcessingClientHello
-        TlsState.AwaitClientFinished -> from == TlsState.AwaitClientHandshake
+        TlsState.AwaitClientFinished -> from == TlsState.ProcessingClientHello
         TlsState.Established -> from == TlsState.AwaitClientFinished
-        is TlsState.Failed -> from !is TlsState.Failed && from != TlsState.Closed
-        TlsState.Closed -> true
+        is TlsState.Closed -> true
     }
 }
-
-fun TlsState.shutdown() = this is TlsState.Closed || this is TlsState.Failed

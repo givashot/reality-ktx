@@ -1,8 +1,7 @@
 package org.givashot.tls.handshake
 
 import org.bouncycastle.tls.*
-import org.givashot.tls.connection.TlsError
-import org.givashot.tls.connection.TlsProtocolException
+import org.givashot.tls.connection.DecodeErrorException
 import org.givashot.tls.constant.TLS_HANDSHAKE_HEADER_LENGTH
 import java.io.ByteArrayInputStream
 import java.io.IOException
@@ -71,13 +70,13 @@ data class ClientHelloWrapper(
         /** Parses a complete ClientHello handshake message (4-byte header included). */
         fun parse(encoded: ByteArray): ClientHelloWrapper {
             if (encoded.size < TLS_HANDSHAKE_HEADER_LENGTH + 35) {
-                throw TlsProtocolException(TlsError.Peer.MalformedClientHello("ClientHello is truncated"))
+                throw DecodeErrorException("ClientHello is truncated")
             }
             val sessionIdLengthOffset = TLS_HANDSHAKE_HEADER_LENGTH + 2 + 32
             val sessionIdLength = encoded[sessionIdLengthOffset].toInt() and 0xFF
             val sessionIdOffset = sessionIdLengthOffset + 1
             if (sessionIdOffset + sessionIdLength > encoded.size) {
-                throw TlsProtocolException(TlsError.Peer.MalformedClientHello("ClientHello session ID is truncated"))
+                throw DecodeErrorException("ClientHello session ID is truncated")
             }
             val parsed = try {
                 ClientHello.parse(
@@ -85,10 +84,11 @@ data class ClientHelloWrapper(
                     null,
                 )
             } catch (e: Exception) {
-                throw TlsProtocolException(TlsError.Peer.MalformedClientHello(e.message ?: e.javaClass.simpleName))
+                throw DecodeErrorException(e.message ?: e.javaClass.simpleName)
             }
             if (sessionIdLength != parsed.sessionID.size) {
-                throw TlsProtocolException(TlsError.Peer.MalformedClientHello("ClientHello session ID length mismatch"))
+                throw DecodeErrorException("ClientHello session ID length mismatch")
+
             }
             return ClientHelloWrapper(parsed, encoded, sessionIdOffset)
         }

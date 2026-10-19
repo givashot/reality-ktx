@@ -1,9 +1,11 @@
 package org.givashot.tls.handshake
 
-import org.bouncycastle.tls.*
+import org.bouncycastle.tls.KeyShareEntry
+import org.bouncycastle.tls.ProtocolVersion
+import org.bouncycastle.tls.ServerHello
+import org.bouncycastle.tls.TlsExtensionsUtils
 import org.givashot.tls.ServerProfile
-import org.givashot.tls.connection.TlsError
-import org.givashot.tls.connection.TlsProtocolException
+import org.givashot.tls.connection.NegotiationFailedException
 import org.givashot.tls.constant.TLS_HANDSHAKE_SERVER_HELLO_CONTENT_TYPE
 import org.givashot.tls.crypto.*
 import java.io.ByteArrayOutputStream
@@ -12,7 +14,7 @@ import java.util.*
 /** Cheap, crypto-free negotiation. Failure means the ClientHello is not for us. */
 internal fun negotiate(clientHello: ClientHelloWrapper, profile: ServerProfile): NegotiatedParameters {
     if (!clientHello.supportsTls13) {
-        throw TlsProtocolException(TlsError.Peer.NegotiationFailed("Client does not support TLS 1.3"))
+        throw NegotiationFailedException("Client does not support TLS 1.3")
     }
     val clientSuites = clientHello.base.cipherSuites
     val cipherSuiteId = when (profile.cipherSelection) {
@@ -20,9 +22,9 @@ internal fun negotiate(clientHello: ClientHelloWrapper, profile: ServerProfile):
             clientSuites.firstOrNull { it in profile.cipherSuites }
         ServerProfile.CipherSelectionMode.SERVER_PREFERENCE ->
             profile.cipherSuites.firstOrNull { it in clientSuites }
-    } ?: throw TlsProtocolException(TlsError.Peer.NegotiationFailed("No mutually supported TLS 1.3 cipher suite"))
+    } ?: throw NegotiationFailedException("No mutually supported TLS 1.3 cipher suite")
     if (clientHello.clientPubKey == null) {
-        throw TlsProtocolException(TlsError.Peer.NegotiationFailed("Client X25519 key share is missing"))
+        throw NegotiationFailedException("Client X25519 key share is missing")
     }
     return NegotiatedParameters(cipherSuite = CipherSuite.fromId(cipherSuiteId))
 }
