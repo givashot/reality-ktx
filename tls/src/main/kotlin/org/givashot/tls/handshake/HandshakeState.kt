@@ -1,15 +1,11 @@
 package org.givashot.tls.handshake
 
-import org.givashot.tls.constant.TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH
 import org.givashot.tls.crypto.ApplicationTrafficSecrets
 import org.givashot.tls.crypto.HandshakeTrafficSecrets
 import org.givashot.tls.crypto.Tls13KeySchedule
 
 /** Everything the TLS 1.3 server handshake accumulates. Knows nothing about records or connection lifecycle. */
 internal class HandshakeState {
-    val clientHelloDecoder = HandshakeMessageDecoder(TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH)
-    val clientFinishedDecoder = HandshakeMessageDecoder()
-    val postHandshakeDecoder = HandshakeMessageDecoder()
     val transcript = TranscriptHash()
 
     var clientHello: ClientHelloWrapper? = null
@@ -22,9 +18,6 @@ internal class HandshakeState {
     var serverFinishedTranscriptHash: ByteArray? = null
 
     fun reset() {
-        clientHelloDecoder.reset()
-        clientFinishedDecoder.reset()
-        postHandshakeDecoder.reset()
         clientHello = null
         negotiated = null
         keySchedule = null

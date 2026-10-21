@@ -1,8 +1,8 @@
 package org.givashot.tls.handshake
 
 import org.givashot.tls.crypto.CipherSuite
-import org.givashot.tls.crypto.digest
 import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 
 /** Accumulates handshake messages; the hash algorithm is only known after cipher suite negotiation. */
 internal class TranscriptHash {
@@ -12,5 +12,7 @@ internal class TranscriptHash {
         messages.write(message)
     }
 
-    fun hash(cipherSuite: CipherSuite): ByteArray = digest(messages.toByteArray(), cipherSuite)
+    fun hash(cipherSuite: CipherSuite): ByteArray =
+        MessageDigest.getInstance(cipherSuite.hash).digest(messages.toByteArray())
+
 }

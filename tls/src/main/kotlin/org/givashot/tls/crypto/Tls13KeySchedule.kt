@@ -1,17 +1,9 @@
 package org.givashot.tls.crypto
 
-import org.givashot.tls.constant.TLS_HANDSHAKE_FINISH_CONTENT_TYPE
+import java.nio.ByteBuffer
 import java.security.MessageDigest
-
-internal fun finishedVerifyData(
-    trafficSecret: ByteArray,
-    transcriptHash: ByteArray,
-    cipherSuite: CipherSuite,
-): ByteArray = hmac(
-    hkdfExpandLabel(trafficSecret, "finished", ByteArray(0), cipherSuite.hashLength, cipherSuite),
-    transcriptHash,
-    cipherSuite,
-)
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 /** TLS 1.3 HKDF key schedule (RFC 8446 section 7.1). Stages must be derived in order. */
 internal class Tls13KeySchedule(private val cipherSuite: CipherSuite) {
@@ -96,27 +88,39 @@ internal class Tls13KeySchedule(private val cipherSuite: CipherSuite) {
     fun finishedVerifyData(trafficSecret: ByteArray, transcriptHash: ByteArray): ByteArray =
         finishedVerifyData(trafficSecret, transcriptHash, cipherSuite)
 
+    private fun finishedVerifyData(
+        trafficSecret: ByteArray,
+        transcriptHash: ByteArray,
+        cipherSuite: CipherSuite,
+    ): ByteArray = hmac(
+        hkdfExpandLabel(trafficSecret, "finished", ByteArray(0), cipherSuite.hashLength, cipherSuite),
+        transcriptHash,
+        cipherSuite,
+    )
+
     /**
      * 客户端发送过来的FINISHED是通过ClientHandshakeTrafficSecret + transcriptHash(CH + 客户端接收到的（SH + EE + CA + CAV + FINISH）)计算得来
      * 我们模拟客户端算法，通过ClientHandshakeTrafficSecret + transcriptHash(CH + 服务端本地记录的（SH + EE + CA + CAV + FINISH）)计算出EXPECT CLIENT FINISHED
-     * 再比较这两个数据，如果客户端接收到的（SH + EE + CA + CAV + FINISH）和 服务端本地记录的（SH + EE + CA + CAV + FINISH）不一致
-     * 或者ClientHandshakeTrafficSecret算出来的和我们算出来的不一致
-     * 都会导致校验失败。
+     * 再比较这两个数据，不一致则校验失败。纯计算：只返回结果，不抛协议异常，也不关心消息如何编码。
      */
-    fun verifyClientFinished(
-        message: ByteArray,
-        clientHandshakeTrafficSecret: ByteArray,
-        transcriptHash: ByteArray,
-    ): Boolean = runCatching {
-        require(message.size >= 4 && (message[0].toInt() and 0xFF) == TLS_HANDSHAKE_FINISH_CONTENT_TYPE)
-        val length = ((message[1].toInt() and 0xFF) shl 16) or
-            ((message[2].toInt() and 0xFF) shl 8) or
-            (message[3].toInt() and 0xFF)
-        require(length == message.size - 4)
-        require(length == cipherSuite.hashLength)
-        val expected = finishedVerifyData(clientHandshakeTrafficSecret, transcriptHash)
-        MessageDigest.isEqual(expected, message.copyOfRange(4, message.size))
-    }.getOrDefault(false)
+    fun verifyFinished(trafficSecret: ByteArray, transcriptHash: ByteArray, verifyData: ByteArray): Boolean =
+        MessageDigest.isEqual(finishedVerifyData(trafficSecret, transcriptHash), verifyData)
+
+    /** Derives the key and iv of a traffic secret. */
+    fun trafficKeys(trafficSecret: ByteArray): TrafficKeys =
+        TrafficKeys(expandKey(trafficSecret), expandIv(trafficSecret), cipherSuite, trafficSecret)
+
+    /** RFC 8446 section 7.2: next generation of [current], derived via "traffic upd". Pure; stateless. */
+    fun nextTrafficKeys(current: TrafficKeys): TrafficKeys {
+        val nextSecret = hkdfExpandLabel(
+            current.trafficSecret,
+            "traffic upd",
+            ByteArray(0),
+            cipherSuite.hashLength,
+            cipherSuite,
+        )
+        return trafficKeys(nextSecret)
+    }
 
     private fun deriveSecret(secret: ByteArray): ByteArray =
         hkdfExpandLabel(secret, "derived", emptyHash(cipherSuite), cipherSuite.hashLength, cipherSuite)
@@ -131,4 +135,58 @@ internal class Tls13KeySchedule(private val cipherSuite: CipherSuite) {
 
     private fun expandIv(trafficSecret: ByteArray): ByteArray =
         hkdfExpandLabel(trafficSecret, "iv", ByteArray(0), cipherSuite.ivLen, cipherSuite)
+
+    private fun hkdfExtract(salt: ByteArray, input: ByteArray, cipherSuite: CipherSuite): ByteArray =
+        hmac(salt, input, cipherSuite)
+
+    private fun hkdfExpand(
+        pseudoRandomKey: ByteArray,
+        info: ByteArray,
+        length: Int,
+        cipherSuite: CipherSuite,
+    ): ByteArray {
+        require(length in 0..255 * cipherSuite.hashLength)
+        if (length == 0) return ByteArray(0)
+
+        val output = ByteArray(length)
+        var previous = ByteArray(0)
+        var offset = 0
+        var counter = 1
+        while (offset < length) {
+            previous = hmac(pseudoRandomKey, previous + info + counter.toByte(), cipherSuite)
+            val copied = minOf(previous.size, length - offset)
+            previous.copyInto(output, offset, 0, copied)
+            offset += copied
+            counter++
+        }
+        return output
+    }
+
+    private fun hkdfExpandLabel(
+        secret: ByteArray,
+        label: String,
+        context: ByteArray,
+        length: Int,
+        cipherSuite: CipherSuite,
+    ): ByteArray {
+        val fullLabel = "tls13 $label".toByteArray(Charsets.US_ASCII)
+        require(fullLabel.size <= 255 && context.size <= 255)
+        val info = ByteBuffer.allocate(2 + 1 + fullLabel.size + 1 + context.size)
+            .putShort(length.toShort())
+            .put(fullLabel.size.toByte())
+            .put(fullLabel)
+            .put(context.size.toByte())
+            .put(context)
+            .array()
+        return hkdfExpand(secret, info, length, cipherSuite)
+    }
+
+    private fun emptyHash(cipherSuite: CipherSuite): ByteArray =
+        MessageDigest.getInstance(cipherSuite.hash).digest(ByteArray(0))
+
+    private fun hmac(key: ByteArray, input: ByteArray, cipherSuite: CipherSuite): ByteArray =
+        Mac.getInstance("Hmac${cipherSuite.hash.replace("-", "")}").run {
+            init(SecretKeySpec(key, algorithm))
+            doFinal(input)
+        }
 }

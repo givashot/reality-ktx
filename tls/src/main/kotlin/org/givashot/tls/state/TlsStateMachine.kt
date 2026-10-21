@@ -1,17 +1,15 @@
 package org.givashot.tls.state
 
-import org.givashot.tls.connection.DecodeErrorException
-import org.givashot.tls.connection.UnexpectMessageException
-import org.givashot.tls.connection.UnexpectedContentTypeException
-import org.givashot.tls.connection.UnexpectedRecordException
-import org.givashot.tls.constant.TLS_CONTENT_TYPE_ALERT
-import org.givashot.tls.constant.TLS_CONTENT_TYPE_APPLICATION_DATA_
-import org.givashot.tls.constant.TLS_CONTENT_TYPE_HANDSHAKE
+import org.givashot.tls.connection.*
+import org.givashot.tls.constant.*
 import org.givashot.tls.record.TlsRecordEvent
 
 internal class TlsStateMachine(initialState: TlsState = TlsState.AwaitClientHello) {
 
     private var state: TlsState = initialState
+
+    /** True once we sent KeyUpdate(update_requested) and the peer has not yet answered with its own KeyUpdate. */
+    private var awaitingPeerKeyUpdate = false
 
     val closed: Boolean get() = state is TlsState.Closed
 
@@ -21,6 +19,34 @@ internal class TlsStateMachine(initialState: TlsState = TlsState.AwaitClientHell
         throwIfClosed("transition to next state $next")
         check(isValidTransition(state, next)) { "Invalid TLS state transition: $state -> $next" }
         state = next
+        if (next is TlsState.Closed) awaitingPeerKeyUpdate = false
+    }
+
+    /** Checks that a handshake message of [type] is the one the current state allows. Never touches the bytes. */
+    fun requireHandshakeType(type: Int) {
+        val expected = when (state) {
+            TlsState.AwaitClientHello -> TLS_HANDSHAKE_CLIENT_HELLO_CONTENT_TYPE
+            TlsState.AwaitClientFinished -> TLS_HANDSHAKE_FINISH_CONTENT_TYPE
+            TlsState.Established -> TLS_HANDSHAKE_KEY_UPDATE_CONTENT_TYPE
+            else -> throw IllegalStateException("Handshake message accepted in state $state")
+        }
+        if (type != expected) throw UnexpectedHandshakeTypeException(expected, type)
+    }
+
+    /** Sending is allowed once established; we do not stack a second request while one is still unanswered. */
+    fun canSendKeyUpdate(requestPeer: Boolean): Boolean =
+        state == TlsState.Established && !(requestPeer && awaitingPeerKeyUpdate)
+
+    fun onKeyUpdateSent(requestPeer: Boolean) {
+        check(canSendKeyUpdate(requestPeer)) { "KeyUpdate not allowed in state $state" }
+        if (requestPeer) awaitingPeerKeyUpdate = true
+    }
+
+    /** Any KeyUpdate from the peer settles a pending request; [updateRequested] decides whether we must answer. */
+    fun onKeyUpdateReceived(updateRequested: Boolean): KeyUpdateAction {
+        check(state == TlsState.Established) { "KeyUpdate not allowed in state $state" }
+        awaitingPeerKeyUpdate = false
+        return if (updateRequested) KeyUpdateAction.Reply else KeyUpdateAction.None
     }
 
     /**

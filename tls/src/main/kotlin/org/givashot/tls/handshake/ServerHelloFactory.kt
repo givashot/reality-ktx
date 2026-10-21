@@ -6,9 +6,7 @@ import org.bouncycastle.tls.ServerHello
 import org.bouncycastle.tls.TlsExtensionsUtils
 import org.givashot.tls.ServerProfile
 import org.givashot.tls.connection.NegotiationFailedException
-import org.givashot.tls.constant.TLS_HANDSHAKE_SERVER_HELLO_CONTENT_TYPE
 import org.givashot.tls.crypto.*
-import java.io.ByteArrayOutputStream
 import java.util.*
 
 /** Cheap, crypto-free negotiation. Failure means the ClientHello is not for us. */
@@ -56,10 +54,4 @@ internal fun newServerHello(
         serverEphemeralPublicKey = serverPublicKey,
         cipherSuite = negotiated.cipherSuite,
     )
-}
-
-internal fun ServerHello.encodeHandshake(): ByteArray {
-    val body = ByteArrayOutputStream()
-    encode(null, body)
-    return tlsHandshakeMessage(TLS_HANDSHAKE_SERVER_HELLO_CONTENT_TYPE, body.toByteArray())
 }

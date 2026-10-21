@@ -1,9 +1,6 @@
 package org.givashot.tls.handshake
 
 import org.bouncycastle.tls.*
-import org.givashot.tls.connection.DecodeErrorException
-import org.givashot.tls.constant.TLS_HANDSHAKE_HEADER_LENGTH
-import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.nio.charset.Charset
 import java.util.*
@@ -66,31 +63,4 @@ data class ClientHelloWrapper(
         it.fill(0, sessionIdOffset, sessionIdOffset + base.sessionID.size)
     }
 
-    internal companion object {
-        /** Parses a complete ClientHello handshake message (4-byte header included). */
-        fun parse(encoded: ByteArray): ClientHelloWrapper {
-            if (encoded.size < TLS_HANDSHAKE_HEADER_LENGTH + 35) {
-                throw DecodeErrorException("ClientHello is truncated")
-            }
-            val sessionIdLengthOffset = TLS_HANDSHAKE_HEADER_LENGTH + 2 + 32
-            val sessionIdLength = encoded[sessionIdLengthOffset].toInt() and 0xFF
-            val sessionIdOffset = sessionIdLengthOffset + 1
-            if (sessionIdOffset + sessionIdLength > encoded.size) {
-                throw DecodeErrorException("ClientHello session ID is truncated")
-            }
-            val parsed = try {
-                ClientHello.parse(
-                    ByteArrayInputStream(encoded, TLS_HANDSHAKE_HEADER_LENGTH, encoded.size - TLS_HANDSHAKE_HEADER_LENGTH),
-                    null,
-                )
-            } catch (e: Exception) {
-                throw DecodeErrorException(e.message ?: e.javaClass.simpleName)
-            }
-            if (sessionIdLength != parsed.sessionID.size) {
-                throw DecodeErrorException("ClientHello session ID length mismatch")
-
-            }
-            return ClientHelloWrapper(parsed, encoded, sessionIdOffset)
-        }
-    }
 }

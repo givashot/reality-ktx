@@ -2,24 +2,21 @@ package org.givashot.tls.connection
 
 import org.givashot.tls.ServerProfile
 import org.givashot.tls.constant.*
-import org.givashot.tls.handshake.Tls13ServerHandshakeCodec
+import org.givashot.tls.handshake.Tls13ServerHandshake
 import org.givashot.tls.record.TlsRecordEvent
 import org.givashot.tls.record.TlsRecordLayer
-import org.givashot.tls.state.TlsAlert
-import org.givashot.tls.state.TlsDecision
-import org.givashot.tls.state.TlsState
-import org.givashot.tls.state.TlsStateMachine
+import org.givashot.tls.state.*
 import java.security.GeneralSecurityException
 
 /**
  * Coordinates the state machine, record layer and handshake. Owns no TLS state of its own:
- * lifecycle lives in TlsStateMachine, protection in TlsRecordLayer, secrets in Tls13ServerHandshake.
+ * lifecycle and KeyUpdate decisions live in TlsStateMachine, protection in TlsRecordLayer, secrets in Tls13ServerHandshake.
  */
 class TlsConnection internal constructor(
     private val profile: ServerProfile,
     private val stateMachine: TlsStateMachine,
     private val recordLayer: TlsRecordLayer,
-    private val handshakeCodec: Tls13ServerHandshakeCodec,
+    private val handshake: Tls13ServerHandshake,
 ) {
 
     val state: TlsState get() = stateMachine.currentState()
@@ -32,68 +29,58 @@ class TlsConnection internal constructor(
      */
     fun receive(bytes: ByteArray): List<TlsClientEvent> {
         stateMachine.throwIfClosed("receive data from client")
-        var breakAfterEvent = false
-        return recordLayer.feed(bytes).mapNotNull { tlsRecordEvent ->
-            if (breakAfterEvent) return@mapNotNull null
-            var tlsClientEvent: TlsClientEvent? = null
-            var peerProtocolException: TlsPeerProtocolException? = null
-            try {
-                when (val tlsDecision = stateMachine.accept(tlsRecordEvent)) {
-                    TlsDecision.Ignore -> {
-                        // CCS or empty application data, just ignore
-                    }
-
-                    is TlsDecision.Reject -> {
-                        breakAfterEvent = true
-                        tlsClientEvent = TlsClientEvent.ClientError(
-                            tlsDecision.exception,
-                            encodeAlert(TLS_ALERT_LEVEL_FATAL, tlsDecision.exception.replyAlert.code)
-                        )
-                    }
-
-                    is TlsDecision.HandshakeFragment -> {
-                        tlsClientEvent = handleHandshakeFragment((tlsRecordEvent as TlsRecordEvent.Content).payload)
-                    }
-
-                    is TlsDecision.ApplicationData -> {
-                        tlsClientEvent =
-                            TlsClientEvent.ClientApplicationData((tlsRecordEvent as TlsRecordEvent.Content).payload)
-                    }
-
-                    is TlsDecision.ClientAlert -> {
-                        val payload = (tlsRecordEvent as TlsRecordEvent.Content).payload
-                        if (payload.size == 2) {
-                            tlsClientEvent = when (val alertCode = payload[1].toInt() and 0xFF) {
-                                TlsAlert.CLOSE_NOTIFY.code -> {
-                                    TlsClientEvent.ClientAlert(
-                                        alertCode,
-                                        encodeAlert(TLS_ALERT_LEVEL_WARNING, TlsAlert.CLOSE_NOTIFY.code)
-                                    )
-                                }
-
-                                else -> {
-                                    TlsClientEvent.ClientAlert(alertCode)
-                                }
-                            }
-                            // break after event
-                            breakAfterEvent = true
-                        } else {
-                            peerProtocolException = DecodeErrorException("Malformed alert of length ${payload.size}")
-                        }
-                    }
-                }
+        recordLayer.feed(bytes)
+        val events = ArrayList<TlsClientEvent>()
+        // One record at a time: handling a record (Finished, KeyUpdate) may switch the read keys for the next one.
+        while (true) {
+            val clientEvent = try {
+                val recordEvent = recordLayer.readNext() ?: break
+                handleRecord(recordEvent)
             } catch (e: Exception) {
-                peerProtocolException = e.toPeerException()
-            }
-            if (peerProtocolException != null) {
-                tlsClientEvent = TlsClientEvent.ClientError(
-                    peerProtocolException,
-                    encodeAlert(TLS_ALERT_LEVEL_FATAL, peerProtocolException.replyAlert.code)
+                val peerException = e.toPeerException()
+                TlsClientEvent.ClientError(
+                    peerException,
+                    encodeAlert(TLS_ALERT_LEVEL_FATAL, peerException.replyAlert.code)
                 )
-                // break after event
-                breakAfterEvent = true
             }
-            return@mapNotNull tlsClientEvent
+            if (clientEvent != null) {
+                events += clientEvent
+            }
+            if (clientEvent is TlsClientEvent.ClientError || clientEvent is TlsClientEvent.ClientAlert) {
+                break
+            }
+        }
+        return events
+    }
+
+    private fun handleRecord(tlsRecordEvent: TlsRecordEvent): TlsClientEvent? {
+        return when (val tlsDecision = stateMachine.accept(tlsRecordEvent)) {
+            // CCS or empty application data, just ignore
+            TlsDecision.Ignore -> null
+
+            is TlsDecision.Reject -> TlsClientEvent.ClientError(
+                tlsDecision.exception,
+                encodeAlert(TLS_ALERT_LEVEL_FATAL, tlsDecision.exception.replyAlert.code)
+            )
+
+            is TlsDecision.HandshakeFragment ->
+                handleHandshakeFragment((tlsRecordEvent as TlsRecordEvent.Content).payload)
+
+            is TlsDecision.ApplicationData ->
+                TlsClientEvent.ClientApplicationData((tlsRecordEvent as TlsRecordEvent.Content).payload)
+
+            is TlsDecision.ClientAlert -> {
+                val payload = (tlsRecordEvent as TlsRecordEvent.Content).payload
+                if (payload.size != 2) throw DecodeErrorException("Malformed alert of length ${payload.size}")
+                when (val alertCode = payload[1].toInt() and 0xFF) {
+                    TlsAlert.CLOSE_NOTIFY.code -> TlsClientEvent.ClientAlert(
+                        alertCode,
+                        encodeAlert(TLS_ALERT_LEVEL_WARNING, TlsAlert.CLOSE_NOTIFY.code)
+                    )
+
+                    else -> TlsClientEvent.ClientAlert(alertCode)
+                }
+            }
         }
     }
 
@@ -118,7 +105,7 @@ class TlsConnection internal constructor(
     fun close(error: Throwable? = null) {
         stateMachine.close(error)
         recordLayer.reset()
-        handshakeCodec.reset()
+        handshake.reset()
     }
 
     private fun sendServerFlight(command: TlsCommand.SendServerFlight): List<ByteArray> {
@@ -137,13 +124,19 @@ class TlsConnection internal constructor(
         }
         val recordLengths = command.recordLengths
 
-        val flight = handshakeCodec.buildServerFlight(command.encryptedExtensions, command.certificate)
+        val flight = handshake.buildServerFlight(command.encryptedExtensions, command.certificate)
         val serverHelloRecord = recordLayer.encode(TLS_CONTENT_TYPE_HANDSHAKE, flight.serverHello)
-        val handshakeTrafficSecrets = handshakeCodec.handshakeTrafficSecrets
+        val handshakeTrafficSecrets = handshake.handshakeTrafficSecrets
         recordLayer.installWriteProtection(handshakeTrafficSecrets.serverTrafficKeys())
         recordLayer.installReadProtection(handshakeTrafficSecrets.clientTrafficKeys())
         val replyTlsRecords = arrayListOf(serverHelloRecord).apply {
-            addAll(recordLayer.encode(TLS_CONTENT_TYPE_HANDSHAKE, flight.encodedHandshakes, recordLengths))
+            addAll(
+                recordLayer.encode(
+                    TLS_CONTENT_TYPE_HANDSHAKE,
+                    flight.encodedHandshakes,
+                    recordLengths
+                )
+            )
         }
         stateMachine.transitionTo(TlsState.AwaitClientFinished)
         return replyTlsRecords
@@ -167,19 +160,22 @@ class TlsConnection internal constructor(
     }
 
     private fun sendKeyUpdate(command: TlsCommand.SendKeyUpdate): List<ByteArray> {
-        if (state != TlsState.Established) {
+        if (!stateMachine.canSendKeyUpdate(command.requestPeer)) {
             throw TlsUsageInvalidStateException(
                 "SendKeyUpdate",
                 state.toString(),
                 encodeAlert(TLS_ALERT_LEVEL_FATAL, TlsAlert.INTERNAL_ERROR.code)
             )
         }
-        val message = handshakeCodec.encodeKeyUpdate(command.requestPeer)
-        val keyUpdateTlsRecord = listOf(recordLayer.encode(
-            TLS_CONTENT_TYPE_HANDSHAKE,
-            message
-        ))
-        recordLayer.updateWriteKeys()
+        // The KeyUpdate itself is protected by the old write keys; only afterwards do the new ones take over.
+        val keyUpdateTlsRecord = listOf(
+            recordLayer.encode(
+                TLS_CONTENT_TYPE_HANDSHAKE,
+                handshake.encodeKeyUpdate(command.requestPeer)
+            )
+        )
+        recordLayer.updateWriteKeys(handshake.nextTrafficKeys(recordLayer.writeKeys))
+        stateMachine.onKeyUpdateSent(command.requestPeer)
         return keyUpdateTlsRecord
     }
 
@@ -188,37 +184,42 @@ class TlsConnection internal constructor(
     ): TlsClientEvent? {
         return when (state) {
             TlsState.AwaitClientHello -> {
-                handshakeCodec.onClientHelloFragment(payload)?.let { helloWrapper ->
-                    stateMachine.transitionTo(TlsState.ProcessingClientHello)
-                    handshakeCodec.processClientHello()
-                    TlsClientEvent.ClientHello(helloWrapper)
-                }
+                val message = handshake.receiveClientHelloFragment(payload) ?: return null
+                stateMachine.requireHandshakeType(message.type)
+                val hello = handshake.onClientHello(message)
+                stateMachine.transitionTo(TlsState.ProcessingClientHello)
+                handshake.processClientHello()
+                TlsClientEvent.ClientHello(hello)
             }
 
             TlsState.AwaitClientFinished -> {
-                if (!handshakeCodec.onClientFinishedFragment(payload)) {
-                    null
-                } else {
-                    val applicationTrafficSecrets = handshakeCodec.applicationTrafficSecrets
-                    recordLayer.installReadProtection(applicationTrafficSecrets.clientTrafficKeys())
-                    recordLayer.installWriteProtection(applicationTrafficSecrets.serverTrafficKeys())
-                    stateMachine.transitionTo(TlsState.Established)
-                    TlsClientEvent.ClientFinished
-                }
+                val message = handshake.receiveFragment(payload) ?: return null
+                stateMachine.requireHandshakeType(message.type)
+                handshake.onClientFinished(message)
+                val applicationTrafficSecrets = handshake.applicationTrafficSecrets
+                recordLayer.installReadProtection(applicationTrafficSecrets.clientTrafficKeys())
+                recordLayer.installWriteProtection(applicationTrafficSecrets.serverTrafficKeys())
+                stateMachine.transitionTo(TlsState.Established)
+                TlsClientEvent.ClientFinished
             }
 
             TlsState.Established -> {
-                val keyUpdate = handshakeCodec.handleKeyUpdate(payload) ?: return null
-                recordLayer.updateReadKeys()
-                if (keyUpdate.updateRequested) {
-                    val reply = recordLayer.encode(
-                        TLS_CONTENT_TYPE_HANDSHAKE,
-                        handshakeCodec.encodeKeyUpdate(requestPeer = false)
-                    )
-                    recordLayer.updateWriteKeys()
-                    TlsClientEvent.ClientKeyUpdate(reply)
-                } else {
-                    TlsClientEvent.ClientKeyUpdate()
+                val message = handshake.receiveFragment(payload) ?: return null
+                stateMachine.requireHandshakeType(message.type)
+                val keyUpdate = handshake.onKeyUpdate(message)
+                val action = stateMachine.onKeyUpdateReceived(keyUpdate.updateRequested)
+                recordLayer.updateReadKeys(handshake.nextTrafficKeys(recordLayer.readKeys))
+                when (action) {
+                    KeyUpdateAction.Reply -> {
+                        val reply = recordLayer.encode(
+                            TLS_CONTENT_TYPE_HANDSHAKE,
+                            handshake.encodeKeyUpdate(false)
+                        )
+                        recordLayer.updateWriteKeys(handshake.nextTrafficKeys(recordLayer.writeKeys))
+                        TlsClientEvent.ClientKeyUpdate(reply)
+                    }
+
+                    KeyUpdateAction.None -> TlsClientEvent.ClientKeyUpdate()
                 }
             }
 
@@ -247,7 +248,7 @@ class TlsConnection internal constructor(
             profile = profile,
             stateMachine = TlsStateMachine(),
             recordLayer = TlsRecordLayer(profile.maxRecordSize),
-            handshakeCodec = Tls13ServerHandshakeCodec(profile),
+            handshake = Tls13ServerHandshake(profile),
         )
     }
 }

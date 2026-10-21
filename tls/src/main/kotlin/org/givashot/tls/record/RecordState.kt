@@ -4,12 +4,12 @@ import org.givashot.tls.crypto.TrafficKeys
 
 internal sealed interface ReadProtection {
     data object Plaintext : ReadProtection
-    class Encrypted(val keys: TrafficKeys) : ReadProtection
+    class Encrypted(val keys: TrafficKeys, var sequenceNumber: Long = 0L) : ReadProtection
 }
 
 internal sealed interface WriteProtection {
     data object Plaintext : WriteProtection
-    class Encrypted(val keys: TrafficKeys) : WriteProtection
+    class Encrypted(val keys: TrafficKeys, var sequenceNumber: Long = 0L) : WriteProtection
 }
 
 internal class RecordState(
