@@ -22,7 +22,7 @@ rootProject.name = "reality-ktx"
 // Learn more about structuring projects with Gradle - https://docs.gradle.org/8.7/userguide/multi_project_builds.html
 include(":app-server")
 include(":utils")
-include("tunnel")
+include(":tunnel-vless")
 
 
 include("app-client")

@@ -7,6 +7,7 @@ import io.netty.channel.ChannelFutureListener
 import io.netty.channel.ChannelHandler
 import io.netty.channel.ChannelHandlerContext
 import io.netty.handler.codec.ByteToMessageDecoder
+import io.netty.handler.timeout.IdleStateHandler
 import io.netty.handler.timeout.ReadTimeoutHandler
 import io.netty.util.AttributeKey
 import org.givashot.reality.authentication.AuthResult
@@ -16,6 +17,7 @@ import org.givashot.tls.ServerProfile
 import org.givashot.tls.connection.TlsClientEvent
 import org.givashot.tls.connection.TlsCommand
 import org.givashot.tls.connection.TlsConnection
+import org.givashot.tls.connection.TlsUsageException
 import org.givashot.tls.handshake.EncryptedExtensionsData
 import java.util.logging.Level
 import java.util.logging.Logger
@@ -37,11 +39,14 @@ class RealityTlsConnectionHandler(
     override fun decode(ctx: ChannelHandlerContext, input: ByteBuf, out: MutableList<Any>) {
         if (switchedToFallback || !input.isReadable || input.readableBytes() <= 0) return
 
-        if (initByteBuf == null) {
-            initByteBuf = ctx.alloc().buffer()
-        }
         if (!authenticated) {
+            if (initByteBuf == null) {
+                initByteBuf = ctx.alloc().buffer()
+            }
             initByteBuf!!.writeBytes(input, input.readerIndex(), input.readableBytes())
+        } else {
+            initByteBuf?.release()
+            initByteBuf = null
         }
 
         val bytes = ByteArray(input.readableBytes())
@@ -74,7 +79,15 @@ class RealityTlsConnectionHandler(
                     }
                 }
 
-                TlsClientEvent.ClientFinished -> Unit
+                TlsClientEvent.ClientFinished -> {
+                    // handshake done, switch to long-live connection
+                    ctx.pipeline().get(ReadTimeoutHandler::class.java)?.let { ctx.pipeline().remove(it) }
+                    ctx.pipeline().addBefore(
+                        ctx.name(), null,
+                        IdleStateHandler(0, 0, 0)
+                    )
+                }
+
                 is TlsClientEvent.ClientApplicationData -> {
                     ctx.fireChannelRead(Unpooled.wrappedBuffer(event.data))
                 }
@@ -161,6 +174,14 @@ class RealityTlsConnectionHandler(
 
     override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
         if (authenticated) {
+            if (cause is TlsUsageException) {
+                closeAfterWrite(
+                    ctx,
+                    writeOutbound(ctx, cause.replyAlertRecord),
+                    cause.message,
+                    cause
+                )
+            }
             close(ctx, "TLS connection handler failed", cause)
         } else {
             switchToFallback(ctx, "TLS connection handler failed", cause)

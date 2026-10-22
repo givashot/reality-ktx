@@ -1,10 +1,10 @@
 package org.givashot.tls.connection
 
-import org.givashot.tls.state.TlsAlert
-
-abstract class TlsUsageException(replyAlertRecord: ByteArray) : RuntimeException() {
+abstract class TlsUsageException(val replyAlertRecord: ByteArray) : Exception() {
     abstract val description: String
-    val replyAlert = TlsAlert.INTERNAL_ERROR
+
+    override val message: String?
+        get() = description
 }
 
 class TlsUsageInvalidStateException(val operation: String, val state: String, replyAlertRecord: ByteArray) :

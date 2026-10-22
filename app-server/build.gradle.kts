@@ -10,7 +10,7 @@ plugins {
 dependencies {
     // Project "app" depends on project "utils". (Project paths are separated with ":", so ":utils" refers to the top-level "utils" project.)
     implementation(project(":utils"))
-    implementation(project(":tunnel"))
+    implementation(project(":tunnel-vless"))
     implementation(project(":tls"))
     implementation(libs.ioNetty)
     // Source: https://mvnrepository.com/artifact/com.sksamuel.hoplite/hoplite-yaml
