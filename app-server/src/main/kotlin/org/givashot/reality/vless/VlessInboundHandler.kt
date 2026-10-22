@@ -98,7 +98,7 @@ class VlessInboundHandler(
     private fun scheduleHeaderTimeout(ctx: ChannelHandlerContext) {
         if (headerTimeout != null) return
         headerTimeout = ctx.executor().schedule(
-            Runnable {
+            {
                 if (phase == Phase.WaitingHeader) rejectHeader("VLESS request header was not received in time")
             },
             HEADER_TIMEOUT_MILLIS,

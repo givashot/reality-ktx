@@ -55,8 +55,6 @@ class RealityTlsConnectionHandler(
             data.getBytes(data.readerIndex(), bytes)
             val records = connection.execute(TlsCommand.SendApplicationData(bytes))
             ctx.writeAndFlush(Unpooled.wrappedBuffer(*records.toTypedArray()))
-        } catch (failure: Exception) {
-            ctx.newFailedFuture(failure)
         } finally {
             data.release()
         }
@@ -69,13 +67,9 @@ class RealityTlsConnectionHandler(
     fun closeWithCloseNotify() {
         val ctx = handlerContext ?: return
         if (!ctx.channel().isActive) return
-        try {
-            val records = connection.execute(TlsCommand.Close)
-            ctx.writeAndFlush(Unpooled.wrappedBuffer(*records.toTypedArray()))
-                .addListener(ChannelFutureListener.CLOSE)
-        } catch (failure: Exception) {
-            ctx.close()
-        }
+        val records = connection.execute(TlsCommand.Close)
+        ctx.writeAndFlush(Unpooled.wrappedBuffer(*records.toTypedArray()))
+            .addListener(ChannelFutureListener.CLOSE)
     }
 
     override fun decode(ctx: ChannelHandlerContext, input: ByteBuf, out: MutableList<Any>) {
