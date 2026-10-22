@@ -1,4 +1,4 @@
-package org.givashot.reality.fallback
+package org.givashot.reality.relay
 
 import io.netty.buffer.ByteBuf
 import io.netty.channel.Channel
@@ -7,7 +7,7 @@ import java.util.logging.Level
 import java.util.logging.Logger
 
 class BidiTcpRelaySession(
-    private val downstreamChannel: Channel,
+    private val downstream: RelayDownstream,
     private val maxPendingBytesPerDirection: Long,
 ) {
 
@@ -88,8 +88,8 @@ class BidiTcpRelaySession(
         if (closed) return
         closed = true
         releasePendingDownstreamWrites()
-        if (cause == null) logger.warning("Closing fallback connection: $reason")
-        else logger.log(Level.WARNING, "Closing fallback connection: $reason", cause)
+        if (cause == null) logger.warning("Closing relay connection: $reason")
+        else logger.log(Level.WARNING, "Closing relay connection: $reason", cause)
         closeChannels()
     }
 
@@ -104,7 +104,7 @@ class BidiTcpRelaySession(
         if (closed) return
         closed = true
         releasePendingDownstreamWrites()
-        if (downstreamChannel.isActive) downstreamChannel.close()
+        if (downstream.isActive) downstream.close()
     }
 
     private fun drainDownstreamWrites() {
@@ -132,7 +132,7 @@ class BidiTcpRelaySession(
     }
 
     private fun writeToDownFromUp(bytes: ByteBuf, size: Int) {
-        val future = downstreamChannel.writeAndFlush(bytes)
+        val future = downstream.writeAndFlush(bytes)
         updateReadState()
         future.addListener { writeFuture ->
             upToDownPendingBytes -= size.toLong()
@@ -158,14 +158,13 @@ class BidiTcpRelaySession(
 
     private fun updateReadState() {
         if (closed) {
-            setAutoRead(downstreamChannel, false)
+            setDownstreamAutoRead(false)
             upstreamChannel?.let { setAutoRead(it, false) }
             return
         }
 
         val upstream = upstreamChannel
-        setAutoRead(
-            downstreamChannel,
+        setDownstreamAutoRead(
             upstream != null &&
                     upstream.isActive &&
                     upstream.isWritable &&
@@ -174,10 +173,16 @@ class BidiTcpRelaySession(
         upstream?.let {
             setAutoRead(
                 it,
-                downstreamChannel.isActive &&
-                        downstreamChannel.isWritable &&
+                downstream.isActive &&
+                        downstream.isWritable &&
                         upToDownPendingBytes < maxPendingBytesPerDirection,
             )
+        }
+    }
+
+    private fun setDownstreamAutoRead(enabled: Boolean) {
+        if (downstream.autoRead != enabled) {
+            downstream.autoRead = enabled
         }
     }
 
@@ -196,8 +201,8 @@ class BidiTcpRelaySession(
     }
 
     private fun closeChannels() {
-        setAutoRead(downstreamChannel, false)
-        if (downstreamChannel.isActive) downstreamChannel.close()
+        setDownstreamAutoRead(false)
+        if (downstream.isActive) downstream.close()
         upstreamChannel?.let {
             setAutoRead(it, false)
             if (it.isActive) it.close()

@@ -1,4 +1,4 @@
-package org.givashot.reality.fallback
+package org.givashot.reality.relay
 
 import io.netty.buffer.ByteBuf
 import io.netty.channel.ChannelHandlerContext

@@ -153,9 +153,7 @@ class TlsConnection internal constructor(
         return if (command.recordLengths != null) {
             recordLayer.encode(TLS_CONTENT_TYPE_APPLICATION_DATA_, command.data, command.recordLengths)
         } else {
-            listOf(
-                recordLayer.encode(TLS_CONTENT_TYPE_APPLICATION_DATA_, command.data)
-            )
+            recordLayer.encodeFragmented(TLS_CONTENT_TYPE_APPLICATION_DATA_, command.data)
         }
     }
 

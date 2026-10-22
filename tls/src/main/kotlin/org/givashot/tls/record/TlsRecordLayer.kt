@@ -159,6 +159,21 @@ internal class TlsRecordLayer(
         }
     }
 
+    /** Splits [payload] into records of at most [TLS_MAX_PLAINTEXT_FRAGMENT_LENGTH] bytes, each protected on its own. */
+    fun encodeFragmented(contentType: Int, payload: ByteArray): List<ByteArray> {
+        if (payload.size <= TLS_MAX_PLAINTEXT_FRAGMENT_LENGTH) {
+            return listOf(encode(contentType, payload))
+        }
+        val records = ArrayList<ByteArray>()
+        var offset = 0
+        while (offset < payload.size) {
+            val end = minOf(offset + TLS_MAX_PLAINTEXT_FRAGMENT_LENGTH, payload.size)
+            records += encode(contentType, payload.copyOfRange(offset, end))
+            offset = end
+        }
+        return records
+    }
+
     fun encode(contentType: Int, payload: ByteArray, recordLengths: List<Int>): List<ByteArray> {
         return when (val protection = state.writeProtection) {
             WriteProtection.Plaintext -> {

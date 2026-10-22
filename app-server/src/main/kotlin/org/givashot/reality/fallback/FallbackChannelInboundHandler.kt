@@ -7,10 +7,13 @@ import io.netty.channel.ChannelInboundHandlerAdapter
 import io.netty.channel.ChannelInitializer
 import io.netty.channel.socket.SocketChannel
 import io.netty.util.ReferenceCountUtil
+import org.givashot.reality.relay.BidiTcpRelaySession
+import org.givashot.reality.relay.UpstreamChannelConnector
+import org.givashot.reality.relay.UpstreamChannelHandler
 import java.util.logging.Level
 import java.util.logging.Logger
 
-class DownstreamChannelHandler(
+class FallbackChannelInboundHandler(
     private val upstreamHost: String,
     private val upstreamPort: Int,
     private val connectTimeoutMillis: Int,
@@ -22,7 +25,8 @@ class DownstreamChannelHandler(
     var connectFuture: ChannelFuture? = null
 
     override fun handlerAdded(ctx: ChannelHandlerContext) {
-        val bidiTcpRelaySession = BidiTcpRelaySession(ctx.channel(), maxPendingBytesPerDirection)
+        val bidiTcpRelaySession =
+            BidiTcpRelaySession(ChannelRelayDownstream(ctx.channel()), maxPendingBytesPerDirection)
         this.bidiTcpRelaySession = bidiTcpRelaySession
 
         // Do not read downstream data until the upstream is connected and able to accept writes.
@@ -77,6 +81,6 @@ class DownstreamChannelHandler(
     }
 
     companion object {
-        private val logger = Logger.getLogger(DownstreamChannelHandler::class.java.name)
+        private val logger = Logger.getLogger(FallbackChannelInboundHandler::class.java.name)
     }
 }

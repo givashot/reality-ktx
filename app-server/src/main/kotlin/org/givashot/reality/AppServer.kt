@@ -13,6 +13,7 @@ import org.givashot.reality.config.loadAppConfig
 import org.givashot.reality.fallback.FallbackHandlerFactory
 import org.givashot.reality.tls.FallbackHandshakeRecordModel
 import org.givashot.reality.tls.RealityTlsConnectionHandler
+import org.givashot.reality.vless.VlessInboundHandler
 
 fun main() {
     val config = loadAppConfig()
@@ -31,14 +32,14 @@ fun main() {
             .channel(NioServerSocketChannel::class.java)
             .childHandler(object : ChannelInitializer<SocketChannel>() {
                 override fun initChannel(ch: SocketChannel) {
-                    ch.pipeline().addLast(ReadTimeoutHandler(10))
-                    ch.pipeline().addLast(
-                        RealityTlsConnectionHandler(
-                            authenticator = authenticator,
-                            handshakeRecordProfile = handshakeRecordProfile,
-                            fallbackHandlerFactory = fallbackHandlerFactory,
-                        )
+                    val tlsHandler = RealityTlsConnectionHandler(
+                        authenticator = authenticator,
+                        handshakeRecordProfile = handshakeRecordProfile,
+                        fallbackHandlerFactory = fallbackHandlerFactory,
                     )
+                    ch.pipeline().addLast(ReadTimeoutHandler(10))
+                    ch.pipeline().addLast(tlsHandler)
+                    ch.pipeline().addLast(VlessInboundHandler(tlsHandler))
                 }
             })
             .bind(config.server.port)

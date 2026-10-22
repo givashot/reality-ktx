@@ -5,6 +5,9 @@ const val TLS_RECORD_HEADER_LENGTH = 5
 // 2^14 + 256
 const val TLS_MAX_RECORD_SIZE = (1 shl 14) + 256
 
+// RFC 8446 section 5.1: maximum TLSPlaintext.fragment length
+const val TLS_MAX_PLAINTEXT_FRAGMENT_LENGTH = 1 shl 14
+
 const val TLS_CONTENT_TYPE_CCS = 0X14
 const val TLS_CONTENT_TYPE_ALERT = 0X15
 const val TLS_CONTENT_TYPE_HANDSHAKE = 0x16

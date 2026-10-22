@@ -14,7 +14,7 @@ class FallbackHandlerFactory(
     }
 
     fun newForwardHandler(initialBytes: ByteBuf? = null): ChannelHandler =
-        DownstreamChannelHandler(
+        FallbackChannelInboundHandler(
             fallbackDest.host,
             fallbackDest.port,
             connectTimeoutMillis,

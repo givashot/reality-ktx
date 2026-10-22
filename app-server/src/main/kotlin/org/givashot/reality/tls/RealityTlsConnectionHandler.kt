@@ -35,6 +35,48 @@ class RealityTlsConnectionHandler(
     private var initByteBuf: ByteBuf? = null
     private var authenticated = false
     private var switchedToFallback = false
+    private var handlerContext: ChannelHandlerContext? = null
+
+    override fun handlerAdded(ctx: ChannelHandlerContext) {
+        handlerContext = ctx
+        super.handlerAdded(ctx)
+    }
+
+    /**
+     * Encrypts [data] into application data records and writes them. Takes ownership of [data].
+     */
+    fun writeApplicationData(data: ByteBuf): ChannelFuture {
+        val ctx = handlerContext ?: run {
+            data.release()
+            throw IllegalStateException("TLS handler is not attached to a pipeline")
+        }
+        return try {
+            val bytes = ByteArray(data.readableBytes())
+            data.getBytes(data.readerIndex(), bytes)
+            val records = connection.execute(TlsCommand.SendApplicationData(bytes))
+            ctx.writeAndFlush(Unpooled.wrappedBuffer(*records.toTypedArray()))
+        } catch (failure: Exception) {
+            ctx.newFailedFuture(failure)
+        } finally {
+            data.release()
+        }
+    }
+
+    /**
+     * Sends a TLS close_notify alert and then closes the channel. Falls back to a plain close if the alert
+     * cannot be produced.
+     */
+    fun closeWithCloseNotify() {
+        val ctx = handlerContext ?: return
+        if (!ctx.channel().isActive) return
+        try {
+            val records = connection.execute(TlsCommand.Close)
+            ctx.writeAndFlush(Unpooled.wrappedBuffer(*records.toTypedArray()))
+                .addListener(ChannelFutureListener.CLOSE)
+        } catch (failure: Exception) {
+            ctx.close()
+        }
+    }
 
     override fun decode(ctx: ChannelHandlerContext, input: ByteBuf, out: MutableList<Any>) {
         if (switchedToFallback || !input.isReadable || input.readableBytes() <= 0) return
@@ -84,7 +126,7 @@ class RealityTlsConnectionHandler(
                     ctx.pipeline().get(ReadTimeoutHandler::class.java)?.let { ctx.pipeline().remove(it) }
                     ctx.pipeline().addBefore(
                         ctx.name(), null,
-                        IdleStateHandler(0, 0, 0)
+                        IdleStateHandler(0, 0, IDLE_TIMEOUT_SECONDS)
                     )
                 }
 
@@ -195,11 +237,14 @@ class RealityTlsConnectionHandler(
     }
 
     override fun handlerRemoved0(ctx: ChannelHandlerContext) {
+        handlerContext = null
         super.handlerRemoved0(ctx)
     }
 
     companion object {
         private val logger = Logger.getLogger(RealityTlsConnectionHandler::class.java.name)
+
+        private const val IDLE_TIMEOUT_SECONDS = 300
 
         private val CLOSE_CAUSE_KEY = AttributeKey.valueOf<Throwable>("CLOSE_CAUSE_KEY")
     }

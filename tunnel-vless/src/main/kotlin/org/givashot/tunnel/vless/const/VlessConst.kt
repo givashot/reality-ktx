@@ -1,0 +1,15 @@
+package org.givashot.tunnel.vless.const
+
+const val VLESS_UUID_LENGTH = 16
+const val VLESS_ADD_ON_LENGTH_DESC = 1
+const val VLESS_COMMAND_LENGTH = 1
+const val VLESS_PORT_LENGTH = 2
+const val VLESS_ADDRESS_TYPE_LENGTH = 1
+const val VLESS_ADDRESS_TYPE_IPV4_LENGTH = 4
+const val VLESS_ADDRESS_TYPE_DOMAIN_LENGTH_DESC = 1
+const val VLESS_ADDRESS_TYPE_IPV6_LENGTH = 16
+const val VLESS_ADDRESS_TYPE_IPV4 = 1
+const val VLESS_ADDRESS_TYPE_DOMAIN = 2
+const val VLESS_ADDRESS_TYPE_IPV6 = 3
+
+const val VLESS_COMMAND_TYPE_TCP = 1
