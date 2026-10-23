@@ -2,11 +2,7 @@ package org.givashot.reality.tls
 
 import io.netty.buffer.ByteBuf
 import io.netty.buffer.Unpooled
-import io.netty.channel.ChannelFuture
-import io.netty.channel.ChannelFutureListener
-import io.netty.channel.ChannelHandler
-import io.netty.channel.ChannelHandlerContext
-import io.netty.handler.codec.ByteToMessageDecoder
+import io.netty.channel.*
 import io.netty.handler.timeout.IdleStateHandler
 import io.netty.handler.timeout.ReadTimeoutHandler
 import io.netty.util.AttributeKey
@@ -19,6 +15,7 @@ import org.givashot.tls.connection.TlsCommand
 import org.givashot.tls.connection.TlsConnection
 import org.givashot.tls.connection.TlsUsageException
 import org.givashot.tls.handshake.EncryptedExtensionsData
+import org.givashot.tls.state.TlsState
 import java.util.logging.Level
 import java.util.logging.Logger
 
@@ -26,9 +23,9 @@ class RealityTlsConnectionHandler(
     private val authenticator: Authenticator,
     private val handshakeRecordProfile: HandshakeRecordProfile,
     private val fallbackHandlerFactory: FallbackHandlerFactory,
-) : ByteToMessageDecoder() {
+) : ChannelDuplexHandler() {
 
-    private val connection = TlsConnection.create(
+    private val tlsConnection = TlsConnection.create(
         ServerProfile(),
     )
 
@@ -42,116 +39,118 @@ class RealityTlsConnectionHandler(
         super.handlerAdded(ctx)
     }
 
-    /**
-     * Encrypts [data] into application data records and writes them. Takes ownership of [data].
-     */
-    fun writeApplicationData(data: ByteBuf): ChannelFuture {
-        val ctx = handlerContext ?: run {
-            data.release()
-            throw IllegalStateException("TLS handler is not attached to a pipeline")
+    override fun channelRead(ctx: ChannelHandlerContext, input: Any) {
+        if (input !is ByteBuf) {
+            ctx.fireChannelRead(input)
+            return
         }
-        return try {
-            val bytes = ByteArray(data.readableBytes())
-            data.getBytes(data.readerIndex(), bytes)
-            val records = connection.execute(TlsCommand.SendApplicationData(bytes))
-            ctx.writeAndFlush(Unpooled.wrappedBuffer(*records.toTypedArray()))
-        } finally {
-            data.release()
-        }
-    }
+        try {
+            if (switchedToFallback || !input.isReadable) return
 
-    /**
-     * Sends a TLS close_notify alert and then closes the channel. Falls back to a plain close if the alert
-     * cannot be produced.
-     */
-    fun closeWithCloseNotify() {
-        val ctx = handlerContext ?: return
-        if (!ctx.channel().isActive) return
-        val records = connection.execute(TlsCommand.Close)
-        ctx.writeAndFlush(Unpooled.wrappedBuffer(*records.toTypedArray()))
-            .addListener(ChannelFutureListener.CLOSE)
-    }
-
-    override fun decode(ctx: ChannelHandlerContext, input: ByteBuf, out: MutableList<Any>) {
-        if (switchedToFallback || !input.isReadable || input.readableBytes() <= 0) return
-
-        if (!authenticated) {
-            if (initByteBuf == null) {
-                initByteBuf = ctx.alloc().buffer()
-            }
-            initByteBuf!!.writeBytes(input, input.readerIndex(), input.readableBytes())
-        } else {
-            initByteBuf?.release()
-            initByteBuf = null
-        }
-
-        val bytes = ByteArray(input.readableBytes())
-        input.readBytes(bytes)
-
-        val tlsClientEvents = connection.receive(bytes)
-        tlsClientEvents.forEach { event ->
-            if (switchedToFallback) return@forEach
-            when (event) {
-                is TlsClientEvent.ClientAlert -> {
-                    if (event.reply != null) {
-                        closeAfterWrite(
-                            ctx,
-                            writeOutbound(ctx, event.reply!!),
-                            "received a close notify"
-                        )
-                    } else {
-                        close(ctx, "received a fatal alert or user cancelled")
-                    }
+            if (!authenticated) {
+                if (initByteBuf == null) {
+                    initByteBuf = ctx.alloc().buffer()
                 }
+                initByteBuf!!.writeBytes(input, input.readerIndex(), input.readableBytes())
+            } else {
+                initByteBuf?.release()
+                initByteBuf = null
+            }
 
-                is TlsClientEvent.ClientHello -> {
-                    check(!authenticated) { "Received a second ClientHello" }
-                    when (val auth = authenticator.doAuth(event.hello)) {
-                        is AuthResult.Failure -> switchToFallback(ctx, auth.reason.toString())
-                        is AuthResult.Success -> {
-                            authenticated = true
-                            sendServerFlight(ctx, auth.authKey)
+            val bytes = ByteArray(input.readableBytes())
+            input.readBytes(bytes)
+
+            val tlsClientEvents = tlsConnection.receive(bytes)
+            tlsClientEvents.forEach { event ->
+                if (switchedToFallback) return@forEach
+                when (event) {
+                    is TlsClientEvent.ClientAlert -> {
+                        if (event.reply != null) {
+                            closeAfterWrite(
+                                ctx,
+                                writeOutbound(ctx, event.reply!!),
+                                "received a close notify"
+                            )
+                        } else {
+                            close(ctx, "received a fatal alert or user cancelled")
+                        }
+                    }
+
+                    is TlsClientEvent.ClientHello -> {
+                        check(!authenticated) { "Received a second ClientHello" }
+                        when (val auth = authenticator.doAuth(event.hello)) {
+                            is AuthResult.Failure -> switchToFallback(ctx, auth.reason.toString())
+                            is AuthResult.Success -> {
+                                authenticated = true
+                                sendServerFlight(ctx, auth.authKey)
+                            }
+                        }
+                    }
+
+                    TlsClientEvent.ClientFinished -> {
+                        // handshake done, switch to long-live connection
+                        ctx.pipeline().get(ReadTimeoutHandler::class.java)?.let { ctx.pipeline().remove(it) }
+                        ctx.pipeline().addBefore(
+                            ctx.name(), null,
+                            IdleStateHandler(0, 0, IDLE_TIMEOUT_SECONDS)
+                        )
+                    }
+
+                    is TlsClientEvent.ClientApplicationData -> {
+                        ctx.fireChannelRead(Unpooled.wrappedBuffer(event.data))
+                    }
+
+                    is TlsClientEvent.ClientKeyUpdate -> {
+                        event.reply?.let {
+                            writeOutbound(ctx, it)
+                        }
+                    }
+
+                    is TlsClientEvent.ClientError -> {
+                        if (!authenticated) {
+                            switchToFallback(
+                                ctx,
+                                event.peerProtocolException.message.toString(),
+                                event.peerProtocolException
+                            )
+                        } else {
+                            closeAfterWrite(
+                                ctx,
+                                writeOutbound(ctx, event.reply),
+                                event.peerProtocolException.message,
+                                event.peerProtocolException
+                            )
                         }
                     }
                 }
-
-                TlsClientEvent.ClientFinished -> {
-                    // handshake done, switch to long-live connection
-                    ctx.pipeline().get(ReadTimeoutHandler::class.java)?.let { ctx.pipeline().remove(it) }
-                    ctx.pipeline().addBefore(
-                        ctx.name(), null,
-                        IdleStateHandler(0, 0, IDLE_TIMEOUT_SECONDS)
-                    )
-                }
-
-                is TlsClientEvent.ClientApplicationData -> {
-                    ctx.fireChannelRead(Unpooled.wrappedBuffer(event.data))
-                }
-
-                is TlsClientEvent.ClientKeyUpdate -> {
-                    event.reply?.let {
-                        writeOutbound(ctx, it)
-                    }
-                }
-
-                is TlsClientEvent.ClientError -> {
-                    if (!authenticated) {
-                        switchToFallback(
-                            ctx,
-                            event.peerProtocolException.message.toString(),
-                            event.peerProtocolException
-                        )
-                    } else {
-                        closeAfterWrite(
-                            ctx,
-                            writeOutbound(ctx, event.reply),
-                            event.peerProtocolException.message,
-                            event.peerProtocolException
-                        )
-                    }
-                }
             }
+        } finally {
+            input.release()
         }
+    }
+
+    override fun write(ctx: ChannelHandlerContext, output: Any, promise: ChannelPromise) {
+        if (output is ByteBuf && tlsConnection.state == TlsState.Established) {
+            try {
+                val bytes = ByteArray(output.readableBytes())
+                output.getBytes(output.readerIndex(), bytes)
+                val records = tlsConnection.execute(TlsCommand.SendApplicationData(bytes))
+                val msg = Unpooled.wrappedBuffer(*records.toTypedArray())
+                super.write(ctx, msg, promise)
+            } finally {
+                output.release()
+            }
+            return
+        }
+        super.write(ctx, output, promise)
+    }
+
+    override fun close(ctx: ChannelHandlerContext, promise: ChannelPromise?) {
+        val records = tlsConnection.execute(TlsCommand.Close)
+        writeOutbound(ctx, *records.toTypedArray())!!
+            .addListener {
+                super.close(ctx, promise)
+            }
     }
 
     private fun writeOutbound(ctx: ChannelHandlerContext, vararg records: ByteArray): ChannelFuture? =
@@ -170,7 +169,7 @@ class RealityTlsConnectionHandler(
 
     private fun sendServerFlight(ctx: ChannelHandlerContext, authKey: ByteArray) {
         val certificate = applyAuthKeySignature(authKey)
-        val reply = connection.execute(
+        val reply = tlsConnection.execute(
             TlsCommand.SendServerFlight(
                 EncryptedExtensionsData(),
                 certificate,
@@ -183,7 +182,7 @@ class RealityTlsConnectionHandler(
     private fun switchToFallback(ctx: ChannelHandlerContext, reason: String, cause: Throwable? = null) {
         if (switchedToFallback || authenticated) return
         switchedToFallback = true
-        connection.close(cause)
+        tlsConnection.close(cause)
         if (cause == null) logger.fine("Switching unauthenticated connection to fallback: $reason")
         else logger.log(Level.FINE, "Switching unauthenticated connection to fallback: $reason", cause)
 
@@ -204,7 +203,7 @@ class RealityTlsConnectionHandler(
     private fun close(ctx: ChannelHandlerContext, reason: String? = null, cause: Throwable? = null) {
         if (!ctx.channel().isActive) return
         ctx.channel().attr(CLOSE_CAUSE_KEY).set(cause)
-        logger.log(Level.WARNING, "${reason.toString()} in TLS state ${connection.state}", cause)
+        logger.log(Level.WARNING, "${reason.toString()} in TLS state ${tlsConnection.state}", cause)
         ctx.close()
     }
 
@@ -225,14 +224,14 @@ class RealityTlsConnectionHandler(
     }
 
     override fun channelInactive(ctx: ChannelHandlerContext) {
-        connection.close(ctx.channel().attr(CLOSE_CAUSE_KEY).get())
+        tlsConnection.close(ctx.channel().attr(CLOSE_CAUSE_KEY).get())
         initByteBuf?.release()
         super.channelInactive(ctx)
     }
 
-    override fun handlerRemoved0(ctx: ChannelHandlerContext) {
+    override fun handlerRemoved(ctx: ChannelHandlerContext) {
         handlerContext = null
-        super.handlerRemoved0(ctx)
+        super.handlerRemoved(ctx)
     }
 
     companion object {

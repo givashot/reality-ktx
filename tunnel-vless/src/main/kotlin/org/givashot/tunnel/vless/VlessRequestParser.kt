@@ -11,6 +11,7 @@ import org.givashot.tunnel.vless.const.VLESS_ADD_ON_LENGTH_DESC
 import org.givashot.tunnel.vless.const.VLESS_COMMAND_LENGTH
 import org.givashot.tunnel.vless.const.VLESS_PORT_LENGTH
 import org.givashot.tunnel.vless.const.VLESS_UUID_LENGTH
+import org.givashot.tunnel.vless.const.VLESS_VERSION_LENGTH
 import java.net.InetAddress
 
 /**
@@ -28,10 +29,11 @@ object VlessRequestParser {
      * @throws VlessProtocolException when the address type is unknown, since the address length cannot be determined.
      */
     fun parse(input: ByteArray): VlessParseResult {
-        val version = input[0]
-        var offset = 1
+        var offset = 0
+        if (input.size < offset + VLESS_VERSION_LENGTH) return VlessParseResult.NeedMoreData
+        val version = input[offset].also { offset += VLESS_VERSION_LENGTH }
         if (input.size < offset + VLESS_UUID_LENGTH) return VlessParseResult.NeedMoreData
-        val uuid = input.copyOfRange(1, 1 + VLESS_UUID_LENGTH).also { offset += VLESS_UUID_LENGTH }
+        val uuid = input.copyOfRange(offset, offset + VLESS_UUID_LENGTH).also { offset += VLESS_UUID_LENGTH }
         if (input.size < offset + VLESS_ADD_ON_LENGTH_DESC) return VlessParseResult.NeedMoreData
         val addonsLength = input[offset].unsigned().also { offset += VLESS_ADD_ON_LENGTH_DESC }
         if (input.size < offset + addonsLength) return VlessParseResult.NeedMoreData

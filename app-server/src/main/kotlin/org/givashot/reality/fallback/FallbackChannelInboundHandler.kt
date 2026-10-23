@@ -26,7 +26,7 @@ class FallbackChannelInboundHandler(
 
     override fun handlerAdded(ctx: ChannelHandlerContext) {
         val bidiTcpRelaySession =
-            BidiTcpRelaySession(ChannelRelayDownstream(ctx.channel()), maxPendingBytesPerDirection)
+            BidiTcpRelaySession(ctx.channel(), maxPendingBytesPerDirection)
         this.bidiTcpRelaySession = bidiTcpRelaySession
 
         // Do not read downstream data until the upstream is connected and able to accept writes.

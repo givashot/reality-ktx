@@ -39,7 +39,7 @@ fun main() {
                     )
                     ch.pipeline().addLast(ReadTimeoutHandler(10))
                     ch.pipeline().addLast(tlsHandler)
-                    ch.pipeline().addLast(VlessInboundHandler(tlsHandler))
+                    ch.pipeline().addLast(VlessInboundHandler())
                 }
             })
             .bind(config.server.port)

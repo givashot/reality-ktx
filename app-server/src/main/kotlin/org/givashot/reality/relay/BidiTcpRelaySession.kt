@@ -7,7 +7,7 @@ import java.util.logging.Level
 import java.util.logging.Logger
 
 class BidiTcpRelaySession(
-    private val downstream: RelayDownstream,
+    private val downstream: Channel,
     private val maxPendingBytesPerDirection: Long,
 ) {
 
@@ -158,13 +158,14 @@ class BidiTcpRelaySession(
 
     private fun updateReadState() {
         if (closed) {
-            setDownstreamAutoRead(false)
+            setAutoRead(downstream, false)
             upstreamChannel?.let { setAutoRead(it, false) }
             return
         }
 
         val upstream = upstreamChannel
-        setDownstreamAutoRead(
+        setAutoRead(
+            downstream,
             upstream != null &&
                     upstream.isActive &&
                     upstream.isWritable &&
@@ -177,12 +178,6 @@ class BidiTcpRelaySession(
                         downstream.isWritable &&
                         upToDownPendingBytes < maxPendingBytesPerDirection,
             )
-        }
-    }
-
-    private fun setDownstreamAutoRead(enabled: Boolean) {
-        if (downstream.autoRead != enabled) {
-            downstream.autoRead = enabled
         }
     }
 
@@ -201,7 +196,7 @@ class BidiTcpRelaySession(
     }
 
     private fun closeChannels() {
-        setDownstreamAutoRead(false)
+        setAutoRead(downstream, false)
         if (downstream.isActive) downstream.close()
         upstreamChannel?.let {
             setAutoRead(it, false)

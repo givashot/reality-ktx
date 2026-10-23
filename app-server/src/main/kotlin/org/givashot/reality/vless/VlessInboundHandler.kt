@@ -13,11 +13,7 @@ import org.givashot.reality.relay.BidiTcpRelaySession
 import org.givashot.reality.relay.UpstreamChannelConnector
 import org.givashot.reality.relay.UpstreamChannelHandler
 import org.givashot.reality.tls.RealityTlsConnectionHandler
-import org.givashot.tunnel.vless.VlessParseResult
-import org.givashot.tunnel.vless.VlessProtocolException
-import org.givashot.tunnel.vless.VlessRequestHeader
-import org.givashot.tunnel.vless.VlessRequestParser
-import org.givashot.tunnel.vless.VlessResponseHeader
+import org.givashot.tunnel.vless.*
 import org.givashot.tunnel.vless.const.VLESS_COMMAND_TYPE_TCP
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -29,7 +25,6 @@ import java.util.logging.Logger
  * Sits after [RealityTlsConnectionHandler] in the pipeline and receives decrypted application data from it.
  */
 class VlessInboundHandler(
-    private val tlsHandler: RealityTlsConnectionHandler,
     private val connectTimeoutMillis: Int = DEFAULT_CONNECT_TIMEOUT_MILLIS,
     private val maxPendingBytesPerDirection: Long = DEFAULT_MAX_PENDING_BYTES,
 ) : ChannelInboundHandlerAdapter() {
@@ -70,7 +65,7 @@ class VlessInboundHandler(
     override fun userEventTriggered(ctx: ChannelHandlerContext, evt: Any) {
         if (evt is IdleStateEvent) {
             val relay = session
-            if (relay == null) tlsHandler.closeWithCloseNotify() else relay.failed("idle timeout")
+            if (relay == null) ctx.close() else relay.failed("idle timeout")
         } else {
             ctx.fireUserEventTriggered(evt)
         }
@@ -99,7 +94,9 @@ class VlessInboundHandler(
         if (headerTimeout != null) return
         headerTimeout = ctx.executor().schedule(
             {
-                if (phase == Phase.WaitingHeader) rejectHeader("VLESS request header was not received in time")
+                if (phase == Phase.WaitingHeader) {
+                    rejectHeader(ctx, "VLESS request header was not received in time")
+                }
             },
             HEADER_TIMEOUT_MILLIS,
             TimeUnit.MILLISECONDS,
@@ -121,21 +118,21 @@ class VlessInboundHandler(
         val result = try {
             VlessRequestParser.parse(bytes)
         } catch (failure: VlessProtocolException) {
-            rejectHeader("invalid VLESS request: ${failure.message}")
+            rejectHeader(ctx, "invalid VLESS request: ${failure.message}")
             return
         }
 
         when (result) {
             is VlessParseResult.NeedMoreData -> {
                 if (buffer.readableBytes() > MAX_HEADER_BYTES) {
-                    rejectHeader("VLESS request header exceeds $MAX_HEADER_BYTES bytes")
+                    rejectHeader(ctx, "VLESS request header exceeds $MAX_HEADER_BYTES bytes")
                 }
             }
 
             is VlessParseResult.Complete -> {
                 val rejection = unsupportedReason(result.header)
                 if (rejection != null) {
-                    rejectHeader(rejection)
+                    rejectHeader(ctx, rejection)
                     return
                 }
                 cancelHeaderTimeout()
@@ -156,7 +153,7 @@ class VlessInboundHandler(
     private fun startRelay(ctx: ChannelHandlerContext, header: VlessRequestHeader, initialPayload: ByteBuf) {
         phase = Phase.Relaying
         val channel = ctx.channel()
-        val relay = BidiTcpRelaySession(TlsRelayDownstream(channel, tlsHandler), maxPendingBytesPerDirection)
+        val relay = BidiTcpRelaySession(channel, maxPendingBytesPerDirection)
         session = relay
 
         // Do not read client data until the target is connected and able to accept writes.
@@ -177,7 +174,7 @@ class VlessInboundHandler(
             connectTimeoutMillis,
         ).addListener { future ->
             if (future.isSuccess) {
-                sendResponseHeader(header, relay)
+                sendResponseHeader(ctx, header, relay)
             } else {
                 relay.failed("could not connect to VLESS target $target", future.cause())
             }
@@ -188,20 +185,22 @@ class VlessInboundHandler(
      * Sent once the target is connected and before any target data is relayed. Target reads only start
      * after the upstream channel becomes active, so the response header always precedes relayed data.
      */
-    private fun sendResponseHeader(header: VlessRequestHeader, relay: BidiTcpRelaySession) {
+    private fun sendResponseHeader(ctx: ChannelHandlerContext, header: VlessRequestHeader, relay: BidiTcpRelaySession) {
         if (relay.closed) return
-        tlsHandler.writeApplicationData(Unpooled.wrappedBuffer(VlessResponseHeader.encode(header.version)))
+        ctx.writeAndFlush(Unpooled.wrappedBuffer(VlessResponseHeader.encode(header.version)))
             .addListener { future ->
-                if (!future.isSuccess) relay.failed("could not send VLESS response header", future.cause())
+                if (!future.isSuccess) {
+                    relay.failed("could not send VLESS response header", future.cause())
+                }
             }
     }
 
-    private fun rejectHeader(reason: String) {
+    private fun rejectHeader(ctx: ChannelHandlerContext, reason: String) {
         logger.warning("Closing VLESS connection: $reason")
         phase = Phase.Closed
         cancelHeaderTimeout()
         releaseHeaderBuffer()
-        tlsHandler.closeWithCloseNotify()
+        ctx.close()
     }
 
     private fun releaseHeaderBuffer() {
