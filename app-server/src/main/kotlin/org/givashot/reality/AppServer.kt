@@ -37,9 +37,9 @@ fun main() {
                         handshakeRecordProfile = handshakeRecordProfile,
                         fallbackHandlerFactory = fallbackHandlerFactory,
                     )
-                    ch.pipeline().addLast(ReadTimeoutHandler(10))
-                    ch.pipeline().addLast(tlsHandler)
-                    ch.pipeline().addLast(VlessInboundHandler())
+                    ch.pipeline().addLast(ReadTimeoutHandler::class.java.simpleName, ReadTimeoutHandler(10))
+                    ch.pipeline().addLast(RealityTlsConnectionHandler::class.java.simpleName, tlsHandler)
+                    ch.pipeline().addLast(VlessInboundHandler::class.java.simpleName, VlessInboundHandler())
                 }
             })
             .bind(config.server.port)

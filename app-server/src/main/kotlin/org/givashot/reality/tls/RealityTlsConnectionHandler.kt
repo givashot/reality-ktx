@@ -25,6 +25,14 @@ class RealityTlsConnectionHandler(
     private val fallbackHandlerFactory: FallbackHandlerFactory,
 ) : ChannelDuplexHandler() {
 
+    companion object {
+        private val logger = Logger.getLogger(RealityTlsConnectionHandler::class.java.name)
+
+        private const val IDLE_TIMEOUT_SECONDS = 300
+
+        private val CLOSE_CAUSE_KEY = AttributeKey.valueOf<Throwable>("CLOSE_CAUSE_KEY")
+    }
+
     private val tlsConnection = TlsConnection.create(
         ServerProfile(),
     )
@@ -32,12 +40,6 @@ class RealityTlsConnectionHandler(
     private var initByteBuf: ByteBuf? = null
     private var authenticated = false
     private var switchedToFallback = false
-    private var handlerContext: ChannelHandlerContext? = null
-
-    override fun handlerAdded(ctx: ChannelHandlerContext) {
-        handlerContext = ctx
-        super.handlerAdded(ctx)
-    }
 
     override fun channelRead(ctx: ChannelHandlerContext, input: Any) {
         if (input !is ByteBuf) {
@@ -91,7 +93,7 @@ class RealityTlsConnectionHandler(
                         // handshake done, switch to long-live connection
                         ctx.pipeline().get(ReadTimeoutHandler::class.java)?.let { ctx.pipeline().remove(it) }
                         ctx.pipeline().addBefore(
-                            ctx.name(), null,
+                            ctx.name(), IdleStateHandler::class.java.simpleName,
                             IdleStateHandler(0, 0, IDLE_TIMEOUT_SECONDS)
                         )
                     }
@@ -129,6 +131,29 @@ class RealityTlsConnectionHandler(
         }
     }
 
+    override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
+        if (authenticated) {
+            if (cause is TlsUsageException) {
+                closeAfterWrite(
+                    ctx,
+                    writeOutbound(ctx, cause.replyAlertRecord),
+                    cause.message,
+                    cause
+                )
+            } else {
+                close(ctx, "TLS connection handler failed", cause)
+            }
+        } else {
+            switchToFallback(ctx, "TLS connection handler failed", cause)
+        }
+    }
+
+    override fun channelInactive(ctx: ChannelHandlerContext) {
+        tlsConnection.close(ctx.channel().attr(CLOSE_CAUSE_KEY).get())
+        initByteBuf?.release()
+        super.channelInactive(ctx)
+    }
+
     override fun write(ctx: ChannelHandlerContext, output: Any, promise: ChannelPromise) {
         if (output is ByteBuf && tlsConnection.state == TlsState.Established) {
             try {
@@ -147,24 +172,29 @@ class RealityTlsConnectionHandler(
 
     override fun close(ctx: ChannelHandlerContext, promise: ChannelPromise?) {
         val records = tlsConnection.execute(TlsCommand.Close)
-        writeOutbound(ctx, *records.toTypedArray())!!
+        writeOutbound(ctx, *records.toTypedArray())
             .addListener {
                 super.close(ctx, promise)
             }
     }
 
-    private fun writeOutbound(ctx: ChannelHandlerContext, vararg records: ByteArray): ChannelFuture? =
-        if (records.isEmpty()) null
-        else ctx.writeAndFlush(Unpooled.wrappedBuffer(*records))
+    private fun writeOutbound(ctx: ChannelHandlerContext, vararg records: ByteArray): ChannelFuture =
+        ctx.writeAndFlush(Unpooled.wrappedBuffer(*records))
+
+    private fun close(ctx: ChannelHandlerContext, reason: String? = null, cause: Throwable? = null) {
+        if (!ctx.channel().isActive) return
+        ctx.channel().attr(CLOSE_CAUSE_KEY).set(cause)
+        logger.log(Level.WARNING, "${reason.toString()} in TLS state ${tlsConnection.state}", cause)
+        ctx.close()
+    }
 
     private fun closeAfterWrite(
         ctx: ChannelHandlerContext,
-        writeFuture: ChannelFuture?,
+        writeFuture: ChannelFuture,
         reason: String? = null,
         cause: Throwable? = null
     ) {
-        if (writeFuture == null) close(ctx, reason, cause)
-        else writeFuture.addListener(ChannelFutureListener { close(ctx, reason, cause) })
+        writeFuture.addListener(ChannelFutureListener { close(ctx, reason, cause) })
     }
 
     private fun sendServerFlight(ctx: ChannelHandlerContext, authKey: ByteArray) {
@@ -183,62 +213,28 @@ class RealityTlsConnectionHandler(
         if (switchedToFallback || authenticated) return
         switchedToFallback = true
         tlsConnection.close(cause)
-        if (cause == null) logger.fine("Switching unauthenticated connection to fallback: $reason")
-        else logger.log(Level.FINE, "Switching unauthenticated connection to fallback: $reason", cause)
-
-        try {
-            switchHandler(ctx, fallbackHandlerFactory.newForwardHandler(initByteBuf))
-        } catch (failure: Exception) {
-            logger.log(Level.WARNING, "Could not switch connection to fallback", failure)
-            ctx.close()
-        }
-    }
-
-    private fun switchHandler(ctx: ChannelHandlerContext, handler: ChannelHandler) {
-        ctx.pipeline().get(ReadTimeoutHandler::class.java)?.let { ctx.pipeline().remove(it) }
-        ctx.pipeline().addAfter(ctx.name(), null, handler)
-        ctx.pipeline().remove(this)
-    }
-
-    private fun close(ctx: ChannelHandlerContext, reason: String? = null, cause: Throwable? = null) {
-        if (!ctx.channel().isActive) return
-        ctx.channel().attr(CLOSE_CAUSE_KEY).set(cause)
-        logger.log(Level.WARNING, "${reason.toString()} in TLS state ${tlsConnection.state}", cause)
-        ctx.close()
-    }
-
-    override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
-        if (authenticated) {
-            if (cause is TlsUsageException) {
-                closeAfterWrite(
-                    ctx,
-                    writeOutbound(ctx, cause.replyAlertRecord),
-                    cause.message,
-                    cause
-                )
-            }
-            close(ctx, "TLS connection handler failed", cause)
+        if (cause == null) {
+            logger.fine("Switching unauthenticated connection to fallback: $reason")
         } else {
-            switchToFallback(ctx, "TLS connection handler failed", cause)
+            logger.log(Level.FINE, "Switching unauthenticated connection to fallback: $reason", cause)
+        }
+        val fallbackHandler = fallbackHandlerFactory.newForwardHandler(initByteBuf)
+        val currentHandlerName = ctx.name()
+        ctx.pipeline().apply {
+            remove(ReadTimeoutHandler::class.java.simpleName)
+            var foundCurrent = false
+            val bizHandlerNames = names().filterNot { it.contains("TailContext") }
+            for (name in bizHandlerNames) {
+                if (foundCurrent) {
+                    remove(name)
+                }
+                if (name == currentHandlerName) {
+                    foundCurrent = true
+                }
+            }
+            addAfter(ctx.name(), fallbackHandler::class.java.simpleName, fallbackHandler)
+            remove(this@RealityTlsConnectionHandler)
         }
     }
 
-    override fun channelInactive(ctx: ChannelHandlerContext) {
-        tlsConnection.close(ctx.channel().attr(CLOSE_CAUSE_KEY).get())
-        initByteBuf?.release()
-        super.channelInactive(ctx)
-    }
-
-    override fun handlerRemoved(ctx: ChannelHandlerContext) {
-        handlerContext = null
-        super.handlerRemoved(ctx)
-    }
-
-    companion object {
-        private val logger = Logger.getLogger(RealityTlsConnectionHandler::class.java.name)
-
-        private const val IDLE_TIMEOUT_SECONDS = 300
-
-        private val CLOSE_CAUSE_KEY = AttributeKey.valueOf<Throwable>("CLOSE_CAUSE_KEY")
-    }
 }

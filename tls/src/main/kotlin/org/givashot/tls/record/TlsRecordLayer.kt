@@ -182,14 +182,14 @@ internal class TlsRecordLayer(
 
             is WriteProtection.Encrypted -> {
                 require(recordLengths.isNotEmpty()) { "TLS record length profile is empty" }
-                val records = encryptRecords(contentType, payload, protection, recordLengths)
+                val records = encryptTlsRecords(contentType, payload, protection, recordLengths)
                 protection.sequenceNumber = checkedSequenceAfter(protection.sequenceNumber, records.size)
                 records
             }
         }
     }
 
-    private fun encryptRecords(
+    private fun encryptTlsRecords(
         contentType: Int,
         plaintext: ByteArray,
         protection: WriteProtection.Encrypted,
