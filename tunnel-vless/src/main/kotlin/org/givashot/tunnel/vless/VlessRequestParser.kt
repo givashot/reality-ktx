@@ -18,7 +18,8 @@ import java.net.InetAddress
  * Parses a VLESS request header from accumulated bytes.
  *
  * Layout: version (1) | UUID (16) | addons length (1) | addons | command (1) | port (2, big-endian) |
- * address type (1) | address. Every field is returned as sent; validation is left to the caller.
+ * address type (1) | address. Every field is returned as sent; validation is left to the caller. The addons are
+ * additionally decoded with [VlessAddonsCodec].
  */
 object VlessRequestParser {
 
@@ -26,7 +27,8 @@ object VlessRequestParser {
      * Returns [VlessParseResult.NeedMoreData] when [input] is a valid prefix but not yet a full header, and
      * [VlessParseResult.Complete] with the number of consumed bytes once the header is fully present.
      *
-     * @throws VlessProtocolException when the address type is unknown, since the address length cannot be determined.
+     * @throws VlessProtocolException when the address type is unknown, since the address length cannot be determined,
+     * or when the addons are not a well-formed protobuf message.
      */
     fun parse(input: ByteArray): VlessParseResult {
         var offset = 0
@@ -68,7 +70,11 @@ object VlessRequestParser {
             else -> throw VlessProtocolException("Unknown VLESS address type: $addressType")
         }
 
-        return VlessParseResult.Complete(VlessRequestHeader(version, uuid, addons, command, host, port), offset)
+        val decodedAddons = VlessAddonsCodec.decode(addons)
+        return VlessParseResult.Complete(
+            VlessRequestHeader(version, uuid, addons, decodedAddons, command, host, port),
+            offset,
+        )
     }
 
     private fun Byte.unsigned(): Int = toInt() and 0xFF

@@ -1,6 +1,6 @@
 package org.givashot.tls.record
 
-internal data class TlsRecordMessage(
+data class TlsRecordMessage(
     val contentType: Int,
     val legacyRecordVersion: Int,
     val payload: ByteArray,

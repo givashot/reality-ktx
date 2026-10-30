@@ -1,20 +1,21 @@
 package org.givashot.reality.vless
 
 import io.netty.buffer.ByteBuf
+import io.netty.buffer.ByteBufUtil
 import io.netty.buffer.Unpooled
-import io.netty.channel.ChannelFuture
-import io.netty.channel.ChannelHandlerContext
-import io.netty.channel.ChannelInboundHandlerAdapter
-import io.netty.channel.ChannelInitializer
+import io.netty.channel.*
 import io.netty.channel.socket.SocketChannel
 import io.netty.handler.timeout.IdleStateEvent
 import io.netty.util.ReferenceCountUtil
 import org.givashot.reality.relay.BidiTcpRelaySession
 import org.givashot.reality.relay.UpstreamChannelConnector
 import org.givashot.reality.relay.UpstreamChannelHandler
+import org.givashot.reality.tls.OuterEncryptionBypass
 import org.givashot.reality.tls.RealityTlsConnectionHandler
 import org.givashot.tunnel.vless.*
 import org.givashot.tunnel.vless.const.VLESS_COMMAND_TYPE_TCP
+import org.givashot.tunnel.vless.vision.VisionFrameCodec
+import org.givashot.tunnel.vless.vision.VisionPaddingPolicy
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.logging.Level
@@ -22,12 +23,19 @@ import java.util.logging.Logger
 
 /**
  * Handles the VLESS request on an authenticated TLS connection and relays it to the requested TCP target.
- * Sits after [RealityTlsConnectionHandler] in the pipeline and receives decrypted application data from it.
+ * Sits after [RealityTlsConnectionHandler] in the pipeline: inbound, it receives decrypted client data; outbound,
+ * it sees everything written towards the client.
+ *
+ * For the `xtls-rprx-vision` flow the client data is unpadded on the way to the target and the target data is padded
+ * on the way to the client. Once either side's Vision stream ends with a direct-copy command, the outer TLS layer
+ * is bypassed through [OuterEncryptionBypass], which therefore must be provided by a handler earlier in the pipeline.
  */
-class VlessInboundHandler(
+class VlessDuplexHandler(
     private val connectTimeoutMillis: Int = DEFAULT_CONNECT_TIMEOUT_MILLIS,
     private val maxPendingBytesPerDirection: Long = DEFAULT_MAX_PENDING_BYTES,
-) : ChannelInboundHandlerAdapter() {
+    private val flowPolicy: VlessFlowPolicy = VlessFlowPolicy(),
+    private val visionPaddingPolicy: VisionPaddingPolicy = VisionPaddingPolicy.DEFAULT,
+) : ChannelDuplexHandler() {
 
     private enum class Phase { WaitingHeader, Relaying, Closed }
 
@@ -36,6 +44,10 @@ class VlessInboundHandler(
     private var headerTimeout: ScheduledFuture<*>? = null
     private var session: BidiTcpRelaySession? = null
     private var connectFuture: ChannelFuture? = null
+    private var frameCodec: VisionFrameCodec? = null
+    private var bypass: OuterEncryptionBypass? = null
+    private var directWriteSwitched = false
+    private var directReadSwitched = false
 
     override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
         if (msg !is ByteBuf) {
@@ -50,10 +62,36 @@ class VlessInboundHandler(
 
             Phase.Relaying -> {
                 val relay = session
-                if (relay == null) msg.release() else relay.enqueueDownstreamBytes(msg)
+                if (relay == null) msg.release() else enqueueClientBytes(relay, msg)
             }
 
             Phase.Closed -> msg.release()
+        }
+    }
+
+    /** Pads the data of the target for a Vision client; everything else is written as it is. */
+    override fun write(ctx: ChannelHandlerContext, msg: Any, promise: ChannelPromise) {
+        val frameCodec = this@VlessDuplexHandler.frameCodec
+        if (msg !is ByteBuf
+            || phase != Phase.Relaying
+            || frameCodec == null
+            || !frameCodec.serverEncoder.encoding
+        ) {
+            super.write(ctx, msg, promise)
+            return
+        }
+        val bytes = ByteBufUtil.getBytes(msg)
+        msg.release()
+
+        val visionFrame = frameCodec.serverEncode(bytes)
+        ctx.write(Unpooled.wrappedBuffer(visionFrame), promise)
+        // The frames above were encrypted synchronously, so what follows may leave the outer TLS layer.
+        if (!directWriteSwitched
+            && !frameCodec.serverEncoder.encoding
+            && frameCodec.serverEncoder.supportDirectRelay == true
+        ) {
+            directWriteSwitched = true
+            bypass?.stopEncrypting()
         }
     }
 
@@ -130,7 +168,7 @@ class VlessInboundHandler(
             }
 
             is VlessParseResult.Complete -> {
-                val rejection = unsupportedReason(result.header)
+                val rejection = unsupportedReason(ctx, result.header)
                 if (rejection != null) {
                     rejectHeader(ctx, rejection)
                     return
@@ -143,11 +181,39 @@ class VlessInboundHandler(
         }
     }
 
-    private fun unsupportedReason(header: VlessRequestHeader): String? = when {
+    private fun unsupportedReason(ctx: ChannelHandlerContext, header: VlessRequestHeader): String? = when {
         header.command != VLESS_COMMAND_TYPE_TCP -> "unsupported VLESS command ${header.command}"
         header.port == 0 -> "VLESS target port must not be 0"
         header.host.isEmpty() -> "VLESS target host must not be empty"
-        else -> null
+        else -> flowPolicy.check(header)
+            ?: if (header.decodedAddons.isVision && findBypass(ctx) == null) {
+                "VLESS flow '${header.flow}' needs an outer TLS handler that can be bypassed"
+            } else {
+                null
+            }
+    }
+
+    private fun findBypass(ctx: ChannelHandlerContext): OuterEncryptionBypass? =
+        ctx.pipeline().firstNotNullOfOrNull { it.value as? OuterEncryptionBypass }
+
+    /**
+     * Forwards client data to the target. For Vision the frames are unpadded first, and a direct-copy command makes
+     * the outer TLS layer pass up the rest of the client's stream as it is.
+     */
+    private fun enqueueClientBytes(relay: BidiTcpRelaySession, bytes: ByteBuf) {
+        val frameCodec = frameCodec
+        if (frameCodec == null || !frameCodec.decoder.decoding) {
+            relay.enqueueDownstreamBytes(bytes)
+            return
+        }
+        val raw = ByteBufUtil.getBytes(bytes)
+        bytes.release()
+        val content = frameCodec.decode(raw)
+        relay.enqueueDownstreamBytes(Unpooled.wrappedBuffer(content))
+        if (!directReadSwitched && frameCodec.decoder.directRelay) {
+            directReadSwitched = true
+            bypass?.stopDecrypting()
+        }
     }
 
     private fun startRelay(ctx: ChannelHandlerContext, header: VlessRequestHeader, initialPayload: ByteBuf) {
@@ -156,9 +222,14 @@ class VlessInboundHandler(
         val relay = BidiTcpRelaySession(channel, maxPendingBytesPerDirection)
         session = relay
 
+        if (header.decodedAddons.isVision) {
+            frameCodec = VisionFrameCodec(header.uuid, visionPaddingPolicy)
+            bypass = findBypass(ctx)
+        }
+
         // Do not read client data until the target is connected and able to accept writes.
         channel.config().isAutoRead = false
-        relay.enqueueDownstreamBytes(initialPayload)
+        enqueueClientBytes(relay, initialPayload)
 
         val target = "${header.host}:${header.port}"
         connectFuture = UpstreamChannelConnector.connect(
@@ -209,7 +280,7 @@ class VlessInboundHandler(
     }
 
     companion object {
-        private val logger = Logger.getLogger(VlessInboundHandler::class.java.name)
+        private val logger = Logger.getLogger(VlessDuplexHandler::class.java.name)
 
         const val DEFAULT_CONNECT_TIMEOUT_MILLIS = 5000
         const val DEFAULT_MAX_PENDING_BYTES = 1L shl 20

@@ -70,7 +70,7 @@ internal class TlsStateMachine(initialState: TlsState = TlsState.AwaitClientHell
 
             is TlsRecordEvent.Empty -> when {
                 event.type == TLS_CONTENT_TYPE_ALERT -> TlsDecision.Reject(DecodeErrorException("Malformed alert of length 0"))
-                event.type == TLS_CONTENT_TYPE_APPLICATION_DATA_ && acceptsApplicationData -> TlsDecision.Ignore
+                event.type == TLS_CONTENT_TYPE_APPLICATION_DATA && acceptsApplicationData -> TlsDecision.Ignore
                 else -> TlsDecision.Reject(UnexpectedRecordException(event.type, phase))
             }
 
@@ -81,7 +81,7 @@ internal class TlsStateMachine(initialState: TlsState = TlsState.AwaitClientHell
                     else -> TlsDecision.Reject(UnexpectedRecordException(event.type, phase))
                 }
 
-                TLS_CONTENT_TYPE_APPLICATION_DATA_ -> when {
+                TLS_CONTENT_TYPE_APPLICATION_DATA -> when {
                     acceptsApplicationData -> TlsDecision.ApplicationData
                     acceptsHandshake ->
                         TlsDecision.Reject(

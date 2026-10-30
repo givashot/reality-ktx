@@ -21,20 +21,26 @@ class TlsConnection internal constructor(
 
     val state: TlsState get() = stateMachine.currentState()
 
-    /**
-     * Receive bytes from peer
-     *
-     * @param bytes from peer
-     * @return processed tls client events
-     */
-    fun receive(bytes: ByteArray): List<TlsClientEvent> {
+    /** Buffers inbound bytes without decrypting them; read the results with [nextEvent]. */
+    fun feed(bytes: ByteArray) {
         stateMachine.throwIfClosed("receive data from client")
         recordLayer.feed(bytes)
-        val events = ArrayList<TlsClientEvent>()
-        // One record at a time: handling a record (Finished, KeyUpdate) may switch the read keys for the next one.
+    }
+
+    /**
+     * Decrypts and handles the next buffered record only, so the caller can stop reading TLS between two records.
+     * Handling a record (Finished, KeyUpdate) may switch the read keys for the following one.
+     * Records that produce no event, such as ChangeCipherSpec, are skipped.
+     *
+     * After a [TlsClientEvent.ClientError] or [TlsClientEvent.ClientAlert] the caller must stop reading.
+     *
+     * @return the next client event, or null when no complete record is buffered
+     */
+    fun nextEvent(): TlsClientEvent? {
+        stateMachine.throwIfClosed("receive data from client")
         while (true) {
             val clientEvent = try {
-                val recordEvent = recordLayer.readNext() ?: break
+                val recordEvent = recordLayer.readNext() ?: return null
                 handleRecord(recordEvent)
             } catch (e: Exception) {
                 val peerException = e.toPeerException()
@@ -44,13 +50,18 @@ class TlsConnection internal constructor(
                 )
             }
             if (clientEvent != null) {
-                events += clientEvent
-            }
-            if (clientEvent is TlsClientEvent.ClientError || clientEvent is TlsClientEvent.ClientAlert) {
-                break
+                return clientEvent
             }
         }
-        return events
+    }
+
+    /**
+     * Takes the inbound bytes that were fed but not yet decrypted, in their original order, so a caller that leaves
+     * TLS can pass them on as they are. Only valid once the connection is established.
+     */
+    fun drainUndecryptedInbound(): ByteArray {
+        check(state == TlsState.Established) { "Cannot leave TLS in state $state" }
+        return recordLayer.drainUndecryptedInbound()
     }
 
     private fun handleRecord(tlsRecordEvent: TlsRecordEvent): TlsClientEvent? {
@@ -151,9 +162,9 @@ class TlsConnection internal constructor(
             )
         }
         return if (command.recordLengths != null) {
-            recordLayer.encode(TLS_CONTENT_TYPE_APPLICATION_DATA_, command.data, command.recordLengths)
+            recordLayer.encode(TLS_CONTENT_TYPE_APPLICATION_DATA, command.data, command.recordLengths)
         } else {
-            recordLayer.encodeFragmented(TLS_CONTENT_TYPE_APPLICATION_DATA_, command.data)
+            recordLayer.encodeFragmented(TLS_CONTENT_TYPE_APPLICATION_DATA, command.data)
         }
     }
 

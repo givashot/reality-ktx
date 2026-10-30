@@ -1,6 +1,6 @@
 package org.givashot.tls.record
 
-internal class ByteQueue(initialCapacity: Int = 256) {
+class ByteQueue(initialCapacity: Int = 256) {
     private var bytes = ByteArray(initialCapacity)
     private var readIndex = 0
     private var writeIndex = 0

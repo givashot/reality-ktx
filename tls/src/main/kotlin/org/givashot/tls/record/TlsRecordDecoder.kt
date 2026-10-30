@@ -2,7 +2,7 @@ package org.givashot.tls.record
 
 import org.givashot.tls.constant.*
 
-internal class TlsRecordDecoder(private val maxRecordSize: Int = TLS_MAX_RECORD_SIZE) {
+class TlsRecordDecoder(private val maxRecordSize: Int = TLS_MAX_RECORD_SIZE) {
     private val buffered = ByteQueue()
 
     init {
@@ -20,7 +20,7 @@ internal class TlsRecordDecoder(private val maxRecordSize: Int = TLS_MAX_RECORD_
             val payloadLength = ((buffered[3].toInt() and 0xFF) shl 8) or
                 (buffered[4].toInt() and 0xFF)
             val recordLength = TLS_RECORD_HEADER_LENGTH + payloadLength
-            require(contentType in TLS_CONTENT_TYPE_CCS..TLS_CONTENT_TYPE_APPLICATION_DATA_) { "Invalid TLS record content type: $contentType" }
+            require(contentType in TLS_CONTENT_TYPE_CCS..TLS_CONTENT_TYPE_APPLICATION_DATA) { "Invalid TLS record content type: $contentType" }
             require(version ushr 8 == TLS_RECORD_VERSION_HIGH) { "Invalid TLS record legacy version: 0x${version.toString(16)}" }
             require(recordLength <= maxRecordSize) { "TLS record exceeds maximum size limit" }
             if (buffered.size < recordLength) break
@@ -35,6 +35,13 @@ internal class TlsRecordDecoder(private val maxRecordSize: Int = TLS_MAX_RECORD_
             buffered.discard(recordLength)
         }
         return records
+    }
+
+    /** Returns and removes the bytes of an incomplete record that has been fed but not yet framed. */
+    fun drainBuffered(): ByteArray {
+        val bytes = buffered.copyRange(0, buffered.size)
+        buffered.clear()
+        return bytes
     }
 
     fun reset() {

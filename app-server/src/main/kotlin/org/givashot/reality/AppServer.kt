@@ -13,7 +13,7 @@ import org.givashot.reality.config.loadAppConfig
 import org.givashot.reality.fallback.FallbackHandlerFactory
 import org.givashot.reality.tls.FallbackHandshakeRecordModel
 import org.givashot.reality.tls.RealityTlsConnectionHandler
-import org.givashot.reality.vless.VlessInboundHandler
+import org.givashot.reality.vless.VlessDuplexHandler
 
 fun main() {
     val config = loadAppConfig()
@@ -39,7 +39,7 @@ fun main() {
                     )
                     ch.pipeline().addLast(ReadTimeoutHandler::class.java.simpleName, ReadTimeoutHandler(10))
                     ch.pipeline().addLast(RealityTlsConnectionHandler::class.java.simpleName, tlsHandler)
-                    ch.pipeline().addLast(VlessInboundHandler::class.java.simpleName, VlessInboundHandler())
+                    ch.pipeline().addLast(VlessDuplexHandler::class.java.simpleName, VlessDuplexHandler())
                 }
             })
             .bind(config.server.port)

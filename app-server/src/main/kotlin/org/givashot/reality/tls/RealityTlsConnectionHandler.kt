@@ -23,7 +23,7 @@ class RealityTlsConnectionHandler(
     private val authenticator: Authenticator,
     private val handshakeRecordProfile: HandshakeRecordProfile,
     private val fallbackHandlerFactory: FallbackHandlerFactory,
-) : ChannelDuplexHandler() {
+) : ChannelDuplexHandler(), OuterEncryptionBypass {
 
     companion object {
         private val logger = Logger.getLogger(RealityTlsConnectionHandler::class.java.name)
@@ -37,12 +37,37 @@ class RealityTlsConnectionHandler(
         ServerProfile(),
     )
 
+    private var context: ChannelHandlerContext? = null
     private var initByteBuf: ByteBuf? = null
     private var authenticated = false
     private var switchedToFallback = false
 
+    // Each direction leaves TLS on its own, irreversibly.
+    private var inboundPassthrough = false
+    private var outboundPassthrough = false
+    private var readingTls = false
+
+    override fun handlerAdded(ctx: ChannelHandlerContext) {
+        context = ctx
+    }
+
+    override fun stopDecrypting() {
+        if (inboundPassthrough) return
+        inboundPassthrough = true
+        // While records are being read, the read loop hands over the undecrypted rest once it unwinds.
+        if (!readingTls) forwardUndecryptedInbound(checkNotNull(context))
+    }
+
+    override fun stopEncrypting() {
+        outboundPassthrough = true
+    }
+
     override fun channelRead(ctx: ChannelHandlerContext, input: Any) {
         if (input !is ByteBuf) {
+            ctx.fireChannelRead(input)
+            return
+        }
+        if (inboundPassthrough) {
             ctx.fireChannelRead(input)
             return
         }
@@ -62,72 +87,88 @@ class RealityTlsConnectionHandler(
             val bytes = ByteArray(input.readableBytes())
             input.readBytes(bytes)
 
-            val tlsClientEvents = tlsConnection.receive(bytes)
-            tlsClientEvents.forEach { event ->
-                if (switchedToFallback) return@forEach
-                when (event) {
-                    is TlsClientEvent.ClientAlert -> {
-                        if (event.reply != null) {
-                            closeAfterWrite(
-                                ctx,
-                                writeOutbound(ctx, event.reply!!),
-                                "received a close notify"
-                            )
-                        } else {
-                            close(ctx, "received a fatal alert or user cancelled")
-                        }
-                    }
+            tlsConnection.feed(bytes)
+            readingTls = true
+            try {
+                while (!inboundPassthrough && !switchedToFallback) {
+                    val event = tlsConnection.nextEvent() ?: break
+                    handleEvent(ctx, event)
+                    if (event is TlsClientEvent.ClientError || event is TlsClientEvent.ClientAlert) break
+                }
+            } finally {
+                readingTls = false
+            }
+            if (inboundPassthrough) forwardUndecryptedInbound(ctx)
+        } finally {
+            input.release()
+        }
+    }
 
-                    is TlsClientEvent.ClientHello -> {
-                        check(!authenticated) { "Received a second ClientHello" }
-                        when (val auth = authenticator.doAuth(event.hello)) {
-                            is AuthResult.Failure -> switchToFallback(ctx, auth.reason.toString())
-                            is AuthResult.Success -> {
-                                authenticated = true
-                                sendServerFlight(ctx, auth.authKey)
-                            }
-                        }
-                    }
+    private fun forwardUndecryptedInbound(ctx: ChannelHandlerContext) {
+        val rest = tlsConnection.drainUndecryptedInbound()
+        if (rest.isNotEmpty()) ctx.fireChannelRead(Unpooled.wrappedBuffer(rest))
+    }
 
-                    TlsClientEvent.ClientFinished -> {
-                        // handshake done, switch to long-live connection
-                        ctx.pipeline().get(ReadTimeoutHandler::class.java)?.let { ctx.pipeline().remove(it) }
-                        ctx.pipeline().addBefore(
-                            ctx.name(), IdleStateHandler::class.java.simpleName,
-                            IdleStateHandler(0, 0, IDLE_TIMEOUT_SECONDS)
-                        )
-                    }
+    private fun handleEvent(ctx: ChannelHandlerContext, event: TlsClientEvent) {
+        when (event) {
+            is TlsClientEvent.ClientAlert -> {
+                if (event.reply != null) {
+                    closeAfterWrite(
+                        ctx,
+                        writeOutbound(ctx, event.reply!!),
+                        "received a close notify"
+                    )
+                } else {
+                    close(ctx, "received a fatal alert or user cancelled")
+                }
+            }
 
-                    is TlsClientEvent.ClientApplicationData -> {
-                        ctx.fireChannelRead(Unpooled.wrappedBuffer(event.data))
-                    }
-
-                    is TlsClientEvent.ClientKeyUpdate -> {
-                        event.reply?.let {
-                            writeOutbound(ctx, it)
-                        }
-                    }
-
-                    is TlsClientEvent.ClientError -> {
-                        if (!authenticated) {
-                            switchToFallback(
-                                ctx,
-                                event.peerProtocolException.message.toString(),
-                                event.peerProtocolException
-                            )
-                        } else {
-                            closeAfterWrite(
-                                ctx,
-                                writeOutbound(ctx, event.reply),
-                                event.peerProtocolException.message,
-                                event.peerProtocolException
-                            )
-                        }
+            is TlsClientEvent.ClientHello -> {
+                check(!authenticated) { "Received a second ClientHello" }
+                when (val auth = authenticator.doAuth(event.hello)) {
+                    is AuthResult.Failure -> switchToFallback(ctx, auth.reason.toString())
+                    is AuthResult.Success -> {
+                        authenticated = true
+                        sendServerFlight(ctx, auth.authKey)
                     }
                 }
             }
-        } finally {
-            input.release()
+
+            TlsClientEvent.ClientFinished -> {
+                // handshake done, switch to long-live connection
+                ctx.pipeline().get(ReadTimeoutHandler::class.java)?.let { ctx.pipeline().remove(it) }
+                ctx.pipeline().addBefore(
+                    ctx.name(), IdleStateHandler::class.java.simpleName,
+                    IdleStateHandler(0, 0, IDLE_TIMEOUT_SECONDS)
+                )
+            }
+
+            is TlsClientEvent.ClientApplicationData -> {
+                ctx.fireChannelRead(Unpooled.wrappedBuffer(event.data))
+            }
+
+            is TlsClientEvent.ClientKeyUpdate -> {
+                event.reply?.let {
+                    writeOutbound(ctx, it)
+                }
+            }
+
+            is TlsClientEvent.ClientError -> {
+                if (!authenticated) {
+                    switchToFallback(
+                        ctx,
+                        event.peerProtocolException.message.toString(),
+                        event.peerProtocolException
+                    )
+                } else {
+                    closeAfterWrite(
+                        ctx,
+                        writeOutbound(ctx, event.reply),
+                        event.peerProtocolException.message,
+                        event.peerProtocolException
+                    )
+                }
+            }
         }
     }
 
@@ -155,7 +196,7 @@ class RealityTlsConnectionHandler(
     }
 
     override fun write(ctx: ChannelHandlerContext, output: Any, promise: ChannelPromise) {
-        if (output is ByteBuf && tlsConnection.state == TlsState.Established) {
+        if (!outboundPassthrough && output is ByteBuf && tlsConnection.state == TlsState.Established) {
             try {
                 val bytes = ByteArray(output.readableBytes())
                 output.getBytes(output.readerIndex(), bytes)
@@ -171,6 +212,11 @@ class RealityTlsConnectionHandler(
     }
 
     override fun close(ctx: ChannelHandlerContext, promise: ChannelPromise?) {
+        // The peer no longer reads TLS records, so a close_notify would corrupt its stream.
+        if (outboundPassthrough) {
+            super.close(ctx, promise)
+            return
+        }
         val records = tlsConnection.execute(TlsCommand.Close)
         writeOutbound(ctx, *records.toTypedArray())
             .addListener {
@@ -179,7 +225,7 @@ class RealityTlsConnectionHandler(
     }
 
     private fun writeOutbound(ctx: ChannelHandlerContext, vararg records: ByteArray): ChannelFuture =
-        ctx.writeAndFlush(Unpooled.wrappedBuffer(*records))
+        if (outboundPassthrough) ctx.newSucceededFuture() else ctx.writeAndFlush(Unpooled.wrappedBuffer(*records))
 
     private fun close(ctx: ChannelHandlerContext, reason: String? = null, cause: Throwable? = null) {
         if (!ctx.channel().isActive) return

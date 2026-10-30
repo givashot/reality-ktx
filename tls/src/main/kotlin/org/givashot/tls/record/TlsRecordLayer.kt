@@ -7,6 +7,7 @@ import org.givashot.tls.connection.UnexpectedRecordException
 import org.givashot.tls.constant.*
 import org.givashot.tls.crypto.CipherSuite
 import org.givashot.tls.crypto.TrafficKeys
+import java.io.ByteArrayOutputStream
 import java.security.GeneralSecurityException
 import java.util.*
 import javax.crypto.Cipher
@@ -56,9 +57,9 @@ internal class TlsRecordLayer(
             }
 
             is ReadProtection.Encrypted -> {
-                if (tlsRecordMessage.contentType != TLS_CONTENT_TYPE_APPLICATION_DATA_) {
+                if (tlsRecordMessage.contentType != TLS_CONTENT_TYPE_APPLICATION_DATA) {
                     throw UnexpectedContentTypeException(
-                        TLS_CONTENT_TYPE_APPLICATION_DATA_,
+                        TLS_CONTENT_TYPE_APPLICATION_DATA,
                         tlsRecordMessage.contentType,
                         "protected record"
                     )
@@ -87,6 +88,20 @@ internal class TlsRecordLayer(
         }
         consecutiveEmptyRecords = 0
         return TlsRecordEvent.Content(contentType, payload)
+    }
+
+    /**
+     * Returns the inbound bytes that were fed but not decrypted, in their original order: the framed records still
+     * waiting in [pendingRecords] first, then the incomplete record held by the decoder. Leaves the layer empty.
+     */
+    fun drainUndecryptedInbound(): ByteArray {
+        val drained = ByteArrayOutputStream()
+        while (true) {
+            val record = pendingRecords.pollFirst() ?: break
+            drained.write(record.encodedRecord)
+        }
+        drained.write(decoder.drainBuffered())
+        return drained.toByteArray()
     }
 
     fun reset() {
@@ -256,7 +271,7 @@ internal class TlsRecordLayer(
         val ciphertextLength = TLS_AEAD_TAG_LENGTH + inner.size
         require(ciphertextLength <= 0xFFFF) { "TLS ciphertext record is too large" }
         val header = byteArrayOf(
-            TLS_CONTENT_TYPE_APPLICATION_DATA_.toByte(),
+            TLS_CONTENT_TYPE_APPLICATION_DATA.toByte(),
             TLS_RECORD_VERSION_HIGH.toByte(),
             TLS_RECORD_VERSION_LOW.toByte(),
             (ciphertextLength ushr 8).toByte(),
@@ -281,7 +296,7 @@ internal class TlsRecordLayer(
         cipherSuite: CipherSuite,
     ): Pair<Int, ByteArray> {
         require(record.size >= 5 + TLS_AEAD_TAG_LENGTH + 1)
-        require(record[0].toInt() and 0xFF == TLS_CONTENT_TYPE_APPLICATION_DATA_)
+        require(record[0].toInt() and 0xFF == TLS_CONTENT_TYPE_APPLICATION_DATA)
         require(record[1].toInt() and 0xFF == TLS_RECORD_VERSION_HIGH)
         require(record[2].toInt() and 0xFF == TLS_RECORD_VERSION_LOW)
         val length = ((record[3].toInt() and 0xFF) shl 8) or (record[4].toInt() and 0xFF)
@@ -304,7 +319,7 @@ internal class TlsRecordLayer(
         if (contentEnd < 0) throw UnexpectedRecordException(0, "protected record")
         val contentType = inner[contentEnd].toInt() and 0xFF
         if (contentType != TLS_CONTENT_TYPE_HANDSHAKE &&
-            contentType != TLS_CONTENT_TYPE_APPLICATION_DATA_ &&
+            contentType != TLS_CONTENT_TYPE_APPLICATION_DATA &&
             contentType != TLS_CONTENT_TYPE_ALERT
         ) {
             throw UnexpectedRecordException(contentType, "protected record")
