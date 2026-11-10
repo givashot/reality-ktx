@@ -1,4 +1,4 @@
-package org.givashot.reality.vless
+package org.givashot.reality.handler
 
 import io.netty.buffer.ByteBuf
 import io.netty.buffer.ByteBufUtil
@@ -7,19 +7,18 @@ import io.netty.channel.*
 import io.netty.channel.socket.SocketChannel
 import io.netty.handler.timeout.IdleStateEvent
 import io.netty.util.ReferenceCountUtil
+import org.givashot.reality.CONNECTION_NUM_KEY
 import org.givashot.reality.relay.BidiTcpRelaySession
 import org.givashot.reality.relay.UpstreamChannelConnector
 import org.givashot.reality.relay.UpstreamChannelHandler
-import org.givashot.reality.tls.OuterEncryptionBypass
-import org.givashot.reality.tls.RealityTlsConnectionHandler
 import org.givashot.tunnel.vless.*
 import org.givashot.tunnel.vless.const.VLESS_COMMAND_TYPE_TCP
 import org.givashot.tunnel.vless.vision.VisionFrameCodec
 import org.givashot.tunnel.vless.vision.VisionPaddingPolicy
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
-import java.util.logging.Level
-import java.util.logging.Logger
 
 /**
  * Handles the VLESS request on an authenticated TLS connection and relays it to the requested TCP target.
@@ -37,8 +36,16 @@ class VlessDuplexHandler(
     private val visionPaddingPolicy: VisionPaddingPolicy = VisionPaddingPolicy.DEFAULT,
 ) : ChannelDuplexHandler() {
 
+    companion object {
+        const val DEFAULT_CONNECT_TIMEOUT_MILLIS = 5000
+        const val DEFAULT_MAX_PENDING_BYTES = 1L shl 20
+        private const val HEADER_TIMEOUT_MILLIS = 10_000L
+        private const val MAX_HEADER_BYTES = 1024
+    }
+
     private enum class Phase { WaitingHeader, Relaying, Closed }
 
+    private lateinit var logger: Logger
     private var phase = Phase.WaitingHeader
     private var headerBuffer: ByteBuf? = null
     private var headerTimeout: ScheduledFuture<*>? = null
@@ -48,6 +55,10 @@ class VlessDuplexHandler(
     private var bypass: OuterEncryptionBypass? = null
     private var directWriteSwitched = false
     private var directReadSwitched = false
+
+    override fun handlerAdded(ctx: ChannelHandlerContext) {
+        logger = LoggerFactory.getLogger("VlessHandler#${ctx.channel().attr(CONNECTION_NUM_KEY).get()}")
+    }
 
     override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
         if (msg !is ByteBuf) {
@@ -121,7 +132,7 @@ class VlessDuplexHandler(
     override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
         val relay = session
         if (relay == null) {
-            logger.log(Level.WARNING, "VLESS connection failed before relay started", cause)
+            logger.warn("VLESS connection failed before relay started", cause)
             ctx.close()
         } else {
             relay.failed("VLESS relay failed", cause)
@@ -168,6 +179,7 @@ class VlessDuplexHandler(
             }
 
             is VlessParseResult.Complete -> {
+                logger.info("vless parse received: $result, uuid = ${String(result.header.uuid)}")
                 val rejection = unsupportedReason(ctx, result.header)
                 if (rejection != null) {
                     rejectHeader(ctx, rejection)
@@ -267,7 +279,7 @@ class VlessDuplexHandler(
     }
 
     private fun rejectHeader(ctx: ChannelHandlerContext, reason: String) {
-        logger.warning("Closing VLESS connection: $reason")
+        logger.warn("Closing VLESS connection: $reason")
         phase = Phase.Closed
         cancelHeaderTimeout()
         releaseHeaderBuffer()
@@ -277,14 +289,5 @@ class VlessDuplexHandler(
     private fun releaseHeaderBuffer() {
         headerBuffer?.release()
         headerBuffer = null
-    }
-
-    companion object {
-        private val logger = Logger.getLogger(VlessDuplexHandler::class.java.name)
-
-        const val DEFAULT_CONNECT_TIMEOUT_MILLIS = 5000
-        const val DEFAULT_MAX_PENDING_BYTES = 1L shl 20
-        private const val HEADER_TIMEOUT_MILLIS = 10_000L
-        private const val MAX_HEADER_BYTES = 1024
     }
 }

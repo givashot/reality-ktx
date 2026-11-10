@@ -2,8 +2,8 @@ package org.givashot.reality.authentication
 
 import org.givashot.reality.config.RealityConfig
 import org.givashot.reality.ext.toHexByteArrayPadded
-import org.givashot.reality.tls.ByteArrayKey
-import org.givashot.reality.tls.RealityCrypto
+import org.givashot.reality.crypto.ByteArrayKey
+import org.givashot.reality.crypto.RealityCrypto
 import org.givashot.tls.crypto.calcSharedSecret
 import org.givashot.tls.handshake.ClientHelloWrapper
 import org.givashot.tls.crypto.x25519PrivateKeyFromBase64

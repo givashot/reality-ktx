@@ -1,4 +1,4 @@
-package org.givashot.reality.tls
+package org.givashot.reality.handler
 
 import io.netty.buffer.ByteBuf
 import io.netty.buffer.Unpooled
@@ -6,9 +6,12 @@ import io.netty.channel.*
 import io.netty.handler.timeout.IdleStateHandler
 import io.netty.handler.timeout.ReadTimeoutHandler
 import io.netty.util.AttributeKey
+import org.givashot.reality.CONNECTION_NUM_KEY
 import org.givashot.reality.authentication.AuthResult
 import org.givashot.reality.authentication.Authenticator
+import org.givashot.reality.crypto.applyAuthKeySignature
 import org.givashot.reality.fallback.FallbackHandlerFactory
+import org.givashot.reality.fallback.HandshakeRecordProfile
 import org.givashot.tls.ServerProfile
 import org.givashot.tls.connection.TlsClientEvent
 import org.givashot.tls.connection.TlsCommand
@@ -16,8 +19,8 @@ import org.givashot.tls.connection.TlsConnection
 import org.givashot.tls.connection.TlsUsageException
 import org.givashot.tls.handshake.EncryptedExtensionsData
 import org.givashot.tls.state.TlsState
-import java.util.logging.Level
-import java.util.logging.Logger
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 
 class RealityTlsConnectionHandler(
     private val authenticator: Authenticator,
@@ -26,12 +29,12 @@ class RealityTlsConnectionHandler(
 ) : ChannelDuplexHandler(), OuterEncryptionBypass {
 
     companion object {
-        private val logger = Logger.getLogger(RealityTlsConnectionHandler::class.java.name)
-
         private const val IDLE_TIMEOUT_SECONDS = 300
 
         private val CLOSE_CAUSE_KEY = AttributeKey.valueOf<Throwable>("CLOSE_CAUSE_KEY")
     }
+
+    private lateinit var logger: Logger
 
     private val tlsConnection = TlsConnection.create(
         ServerProfile(),
@@ -49,6 +52,7 @@ class RealityTlsConnectionHandler(
 
     override fun handlerAdded(ctx: ChannelHandlerContext) {
         context = ctx
+        logger = LoggerFactory.getLogger("TlsConnectionHandler#${ctx.channel().attr(CONNECTION_NUM_KEY).get()}")
     }
 
     override fun stopDecrypting() {
@@ -92,7 +96,7 @@ class RealityTlsConnectionHandler(
             try {
                 while (!inboundPassthrough && !switchedToFallback) {
                     val event = tlsConnection.nextEvent() ?: break
-                    handleEvent(ctx, event)
+                    handleClientEvent(ctx, event)
                     if (event is TlsClientEvent.ClientError || event is TlsClientEvent.ClientAlert) break
                 }
             } finally {
@@ -109,7 +113,8 @@ class RealityTlsConnectionHandler(
         if (rest.isNotEmpty()) ctx.fireChannelRead(Unpooled.wrappedBuffer(rest))
     }
 
-    private fun handleEvent(ctx: ChannelHandlerContext, event: TlsClientEvent) {
+    private fun handleClientEvent(ctx: ChannelHandlerContext, event: TlsClientEvent) {
+        logger.info("handleClientEvent called with event: ${event::class.simpleName}")
         when (event) {
             is TlsClientEvent.ClientAlert -> {
                 if (event.reply != null) {
@@ -144,6 +149,10 @@ class RealityTlsConnectionHandler(
             }
 
             is TlsClientEvent.ClientApplicationData -> {
+                val logBytes = ByteArray(event.data.size.coerceAtMost(100))
+                event.data.copyInto(logBytes, endIndex = logBytes.size - 1)
+                val logHexBytes = logBytes.map { it.toHexString() }
+                logger.info("received inbound application bytes, size = ${event.data.size}, content =  $logHexBytes")
                 ctx.fireChannelRead(Unpooled.wrappedBuffer(event.data))
             }
 
@@ -200,6 +209,10 @@ class RealityTlsConnectionHandler(
             try {
                 val bytes = ByteArray(output.readableBytes())
                 output.getBytes(output.readerIndex(), bytes)
+                val logBytes = ByteArray(bytes.size.coerceAtMost(100))
+                bytes.copyInto(logBytes, endIndex = logBytes.size - 1)
+                val logHexBytes = logBytes.map { it.toHexString() }
+                logger.warn("write outbound application bytes, size = ${bytes.size}, content = $logHexBytes")
                 val records = tlsConnection.execute(TlsCommand.SendApplicationData(bytes))
                 val msg = Unpooled.wrappedBuffer(*records.toTypedArray())
                 super.write(ctx, msg, promise)
@@ -230,7 +243,7 @@ class RealityTlsConnectionHandler(
     private fun close(ctx: ChannelHandlerContext, reason: String? = null, cause: Throwable? = null) {
         if (!ctx.channel().isActive) return
         ctx.channel().attr(CLOSE_CAUSE_KEY).set(cause)
-        logger.log(Level.WARNING, "${reason.toString()} in TLS state ${tlsConnection.state}", cause)
+        logger.warn("${reason.toString()} in TLS state ${tlsConnection.state}", cause)
         ctx.close()
     }
 
@@ -244,6 +257,7 @@ class RealityTlsConnectionHandler(
     }
 
     private fun sendServerFlight(ctx: ChannelHandlerContext, authKey: ByteArray) {
+        logger.warn("sendServerFlight called")
         val certificate = applyAuthKeySignature(authKey)
         val reply = tlsConnection.execute(
             TlsCommand.SendServerFlight(
@@ -260,9 +274,9 @@ class RealityTlsConnectionHandler(
         switchedToFallback = true
         tlsConnection.close(cause)
         if (cause == null) {
-            logger.fine("Switching unauthenticated connection to fallback: $reason")
+            logger.debug("Switching unauthenticated connection to fallback: $reason")
         } else {
-            logger.log(Level.FINE, "Switching unauthenticated connection to fallback: $reason", cause)
+            logger.debug("Switching unauthenticated connection to fallback: $reason", cause)
         }
         val fallbackHandler = fallbackHandlerFactory.newForwardHandler(initByteBuf)
         val currentHandlerName = ctx.name()

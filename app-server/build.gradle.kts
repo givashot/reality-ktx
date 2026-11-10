@@ -18,6 +18,8 @@ dependencies {
     // Source: https://mvnrepository.com/artifact/org.bouncycastle/bctls-jdk18on
     implementation(libs.bctls)
     implementation(libs.bcpkix)
+    implementation(libs.slf4jApi)
+    runtimeOnly(libs.logbackClassic)
     testImplementation(kotlin("test"))
 }
 

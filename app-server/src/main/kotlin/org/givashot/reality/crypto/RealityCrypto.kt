@@ -1,4 +1,4 @@
-package org.givashot.reality.tls
+package org.givashot.reality.crypto
 
 import org.givashot.tls.handshake.ClientHelloWrapper
 import javax.crypto.Cipher

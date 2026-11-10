@@ -1,4 +1,4 @@
-package org.givashot.reality.tls
+package org.givashot.reality.crypto
 
 import org.bouncycastle.asn1.ASN1OctetString
 import org.bouncycastle.asn1.pkcs.PrivateKeyInfo

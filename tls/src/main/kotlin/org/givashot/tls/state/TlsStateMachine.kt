@@ -25,9 +25,9 @@ internal class TlsStateMachine(initialState: TlsState = TlsState.AwaitClientHell
     /** Checks that a handshake message of [type] is the one the current state allows. Never touches the bytes. */
     fun requireHandshakeType(type: Int) {
         val expected = when (state) {
-            TlsState.AwaitClientHello -> TLS_HANDSHAKE_CLIENT_HELLO_CONTENT_TYPE
-            TlsState.AwaitClientFinished -> TLS_HANDSHAKE_FINISH_CONTENT_TYPE
-            TlsState.Established -> TLS_HANDSHAKE_KEY_UPDATE_CONTENT_TYPE
+            TlsState.AwaitClientHello -> TLS_HANDSHAKE_CONTENT_TYPE_CLIENT_HELLO
+            TlsState.AwaitClientFinished -> TLS_HANDSHAKE_CONTENT_TYPE_FINISH
+            TlsState.Established -> TLS_HANDSHAKE_CONTENT_TYPE_KEY_UPDATE
             else -> throw IllegalStateException("Handshake message accepted in state $state")
         }
         if (type != expected) throw UnexpectedHandshakeTypeException(expected, type)

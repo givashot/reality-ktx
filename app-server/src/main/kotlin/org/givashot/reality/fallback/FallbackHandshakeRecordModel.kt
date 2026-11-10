@@ -1,4 +1,4 @@
-package org.givashot.reality.tls
+package org.givashot.reality.fallback
 
 import io.netty.bootstrap.Bootstrap
 import io.netty.buffer.ByteBuf
@@ -39,58 +39,58 @@ class FallbackHandshakeRecordModel(
     fun learn(): HandshakeRecordProfile {
         val host = fallbackDest.host
         val port = fallbackDest.port
-            val resultFuture = CompletableFuture<HandshakeRecordProfile>()
-            val sslContext = SslContextBuilder.forClient()
-                .trustManager(InsecureTrustManagerFactory.INSTANCE) // 只是探测行为，不需要校验证书链
-                .build()
+        val resultFuture = CompletableFuture<HandshakeRecordProfile>()
+        val sslContext = SslContextBuilder.forClient()
+            .trustManager(InsecureTrustManagerFactory.INSTANCE) // 只是探测行为，不需要校验证书链
+            .build()
 
-            val bootstrap = Bootstrap()
-                .group(group)
-                .channel(NioSocketChannel::class.java)
-                .handler(object : ChannelInitializer<SocketChannel>() {
-                    override fun initChannel(ch: SocketChannel) {
-                        val recorder = RecordSniffingHandler()
-                        val sslHandler = sslContext.newHandler(ch.alloc(), host, port)
+        val bootstrap = Bootstrap()
+            .group(group)
+            .channel(NioSocketChannel::class.java)
+            .handler(object : ChannelInitializer<SocketChannel>() {
+                override fun initChannel(ch: SocketChannel) {
+                    val recorder = RecordSniffingHandler()
+                    val sslHandler = sslContext.newHandler(ch.alloc(), host, port)
 
-                        if (isDnsName(host)) {
-                            val engine = sslHandler.engine()
-                            val params = engine.sslParameters
-                            params.serverNames = listOf(SNIHostName(host))
-                            engine.sslParameters = params
-                        }
-
-                        sslHandler.handshakeFuture().addListener { future ->
-                            if (future.isSuccess) {
-                                resultFuture.complete(HandshakeRecordProfile(recorder.applicationDataRecordLengths.toList()))
-                            } else {
-                                resultFuture.completeExceptionally(future.cause())
-                            }
-                            ch.close()
-                        }
-
-                        // recorder 必须放在 sslHandler 之前（更靠近 socket），
-                        // 这样它拿到的是加/解密之前的原始 record 字节。
-                        ch.pipeline()
-                            .addLast(recorder)
-                            .addLast(sslHandler)
+                    if (isDnsName(host)) {
+                        val engine = sslHandler.engine()
+                        val params = engine.sslParameters
+                        params.serverNames = listOf(SNIHostName(host))
+                        engine.sslParameters = params
                     }
-                })
 
-            val connectFuture = bootstrap.connect(host, port)
-            connectFuture.addListener { future ->
-                if (!future.isSuccess) resultFuture.completeExceptionally(future.cause())
-            }
+                    sslHandler.handshakeFuture().addListener { future ->
+                        if (future.isSuccess) {
+                            resultFuture.complete(HandshakeRecordProfile(recorder.applicationDataRecordLengths.toList()))
+                        } else {
+                            resultFuture.completeExceptionally(future.cause())
+                        }
+                        ch.close()
+                    }
 
-            return try {
-                resultFuture.get(10, TimeUnit.SECONDS)
-            } catch (timeout: TimeoutException) {
-                connectFuture.channel().close()
-                throw timeout
-            } catch (interrupted: InterruptedException) {
-                connectFuture.channel().close()
-                Thread.currentThread().interrupt()
-                throw interrupted
-            }
+                    // recorder 必须放在 sslHandler 之前（更靠近 socket），
+                    // 这样它拿到的是加/解密之前的原始 record 字节。
+                    ch.pipeline()
+                        .addLast(recorder)
+                        .addLast(sslHandler)
+                }
+            })
+
+        val connectFuture = bootstrap.connect(host, port)
+        connectFuture.addListener { future ->
+            if (!future.isSuccess) resultFuture.completeExceptionally(future.cause())
+        }
+
+        return try {
+            resultFuture.get(10, TimeUnit.SECONDS)
+        } catch (timeout: TimeoutException) {
+            connectFuture.channel().close()
+            throw timeout
+        } catch (interrupted: InterruptedException) {
+            connectFuture.channel().close()
+            Thread.currentThread().interrupt()
+            throw interrupted
+        }
     }
 
     private fun isDnsName(host: String): Boolean =

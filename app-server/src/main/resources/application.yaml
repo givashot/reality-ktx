@@ -1,7 +1,7 @@
 server:
   port: 443
   reality:
-    private-key: "wAINCWd2CtsawuKoRTm7d05zRjtMQiJbwFoD87tDwVA"
+    private-key: "yKS-FR9h3VME_eC3OGQMwX2FAHMenKGl18PjisAPFVU"
     short-ids: ["98653321"]
     acceptable-snis: ["httpbin.org", "www.httpbin.org"]
     fallback-dest:

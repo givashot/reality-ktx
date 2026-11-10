@@ -10,8 +10,7 @@ import io.netty.util.ReferenceCountUtil
 import org.givashot.reality.relay.BidiTcpRelaySession
 import org.givashot.reality.relay.UpstreamChannelConnector
 import org.givashot.reality.relay.UpstreamChannelHandler
-import java.util.logging.Level
-import java.util.logging.Logger
+import org.slf4j.LoggerFactory
 
 class FallbackChannelInboundHandler(
     private val upstreamHost: String,
@@ -76,11 +75,11 @@ class FallbackChannelInboundHandler(
 
     override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
         bidiTcpRelaySession?.failed("fallback client channel failed", cause)
-            ?: logger.log(Level.WARNING, "Fallback client channel failed", cause)
+            ?: logger.warn("Fallback client channel failed", cause)
         ctx.close()
     }
 
     companion object {
-        private val logger = Logger.getLogger(FallbackChannelInboundHandler::class.java.name)
+        private val logger = LoggerFactory.getLogger(FallbackChannelInboundHandler::class.java)
     }
 }

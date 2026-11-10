@@ -2,9 +2,9 @@ package org.givashot.reality.relay
 
 import io.netty.buffer.ByteBuf
 import io.netty.channel.Channel
+import io.netty.channel.ConnectTimeoutException
+import org.slf4j.LoggerFactory
 import java.util.*
-import java.util.logging.Level
-import java.util.logging.Logger
 
 class BidiTcpRelaySession(
     private val downstream: Channel,
@@ -88,8 +88,15 @@ class BidiTcpRelaySession(
         if (closed) return
         closed = true
         releasePendingDownstreamWrites()
-        if (cause == null) logger.warning("Closing relay connection: $reason")
-        else logger.log(Level.WARNING, "Closing relay connection: $reason", cause)
+        if (cause == null) {
+            logger.warn("Closing relay connection: $reason")
+        } else {
+            if (cause is ConnectTimeoutException) {
+//                logger.warn("Connection timed out: $reason")
+            } else {
+                logger.warn("Closing relay connection: $reason", cause)
+            }
+        }
         closeChannels()
     }
 
@@ -211,6 +218,6 @@ class BidiTcpRelaySession(
     }
 
     companion object {
-        private val logger = Logger.getLogger(BidiTcpRelaySession::class.java.name)
+        private val logger = LoggerFactory.getLogger(BidiTcpRelaySession::class.java)
     }
 }

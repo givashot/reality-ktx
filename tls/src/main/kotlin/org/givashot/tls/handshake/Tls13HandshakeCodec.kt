@@ -87,7 +87,7 @@ internal class Tls13HandshakeCodec {
     fun encodeServerHello(serverHello: ServerHello): ByteArray{
         val body = ByteArrayOutputStream()
         serverHello.encode(null, body)
-        return tlsHandshakeMessage(TLS_HANDSHAKE_SERVER_HELLO_CONTENT_TYPE, body.toByteArray())
+        return tlsHandshakeMessage(TLS_HANDSHAKE_CONTENT_TYPE_SERVER_HELLO, body.toByteArray())
     }
 
     fun encodeEncryptedExtensions(data: EncryptedExtensionsData): ByteArray {
@@ -103,7 +103,7 @@ internal class Tls13HandshakeCodec {
         val body = ByteArrayOutputStream()
         body.writeUint16(extensionBytes.size())
         body.write(extensionBytes.toByteArray())
-        return tlsHandshakeMessage(TLS_HANDSHAKE_ENCRYPTED_EXTENSIONS_CONTENT_TYPE, body.toByteArray())
+        return tlsHandshakeMessage(TLS_HANDSHAKE_CONTENT_TYPE_ENCRYPTED_EXTENSIONS, body.toByteArray())
     }
 
     fun encodeCertificate(certificateData: CertificateData): ByteArray {
@@ -120,7 +120,7 @@ internal class Tls13HandshakeCodec {
         body.write(0)
         body.writeUint24(certificateList.size())
         body.write(certificateList.toByteArray())
-        return tlsHandshakeMessage(TLS_HANDSHAKE_CERTIFICATE_CONTENT_TYPE, body.toByteArray())
+        return tlsHandshakeMessage(TLS_HANDSHAKE_CONTENT_TYPE_CERTIFICATE, body.toByteArray())
     }
 
     fun encodeCertificateVerify(certificate: CertificateData, transcriptHash: ByteArray): ByteArray {
@@ -136,16 +136,16 @@ internal class Tls13HandshakeCodec {
         require(signature.size <= 0xFFFF)
         body.writeUint16(signature.size)
         body.write(signature)
-        return tlsHandshakeMessage(TLS_HANDSHAKE_CERTIFICATE_VERIFY_CONTENT_TYPE, body.toByteArray())
+        return tlsHandshakeMessage(TLS_HANDSHAKE_CONTENT_TYPE_CERTIFICATE_VERIFY, body.toByteArray())
     }
 
     fun encodeFinished(verifyData: ByteArray): ByteArray {
-        return tlsHandshakeMessage(type = TLS_HANDSHAKE_FINISH_CONTENT_TYPE, body = verifyData)
+        return tlsHandshakeMessage(type = TLS_HANDSHAKE_CONTENT_TYPE_FINISH, body = verifyData)
     }
 
     fun encodeKeyUpdate(requestPeer: Boolean): ByteArray =
         tlsHandshakeMessage(
-            TLS_HANDSHAKE_KEY_UPDATE_CONTENT_TYPE,
+            TLS_HANDSHAKE_CONTENT_TYPE_KEY_UPDATE,
             byteArrayOf(if (requestPeer) 1 else 0),
         )
 

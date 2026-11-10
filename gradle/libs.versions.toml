@@ -11,8 +11,12 @@ ioNetty = "4.2.18.Final"
 hopliteYaml = "2.9.0"
 bctls = "1.86.1"
 bcpkix = "1.86"
+slf4j = "2.0.17"
+logback = "1.6.3"
 
 [libraries]
+slf4jApi = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
+logbackClassic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
 kotlinGradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 kotlinxDatetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinxDatetime" }
 kotlinxSerialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerializationJSON" }

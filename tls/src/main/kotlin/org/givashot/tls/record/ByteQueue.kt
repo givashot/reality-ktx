@@ -56,9 +56,9 @@ class ByteQueue(initialCapacity: Int = 256) {
             newCapacity = (newCapacity.toLong() * 2)
                 .coerceAtMost(Int.MAX_VALUE.toLong())
                 .toInt()
-            require(newCapacity >= requiredCapacity) {
-                "TLS input buffer is too large"
-            }
+        }
+        require(newCapacity >= requiredCapacity) {
+            "TLS input buffer is too large"
         }
         val expanded = ByteArray(newCapacity)
         bytes.copyInto(expanded, 0, readIndex, writeIndex)
