@@ -1,10 +1,4 @@
-server:
-  port: 443
-  reality:
-    private-key: "yKS-FR9h3VME_eC3OGQMwX2FAHMenKGl18PjisAPFVU"
-    short-ids: ["98653321"]
-    acceptable-snis: ["httpbin.org", "www.httpbin.org"]
-    fallback-dest:
-      host: "httpbin.org"
-      port: 443
-    allowed-clock-skew-seconds: 60
+# 应用配置
+app:
+  profiles:
+    active: "test"

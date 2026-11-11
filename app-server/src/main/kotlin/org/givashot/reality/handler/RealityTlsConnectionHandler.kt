@@ -273,11 +273,7 @@ class RealityTlsConnectionHandler(
         if (switchedToFallback || authenticated) return
         switchedToFallback = true
         tlsConnection.close(cause)
-        if (cause == null) {
-            logger.debug("Switching unauthenticated connection to fallback: $reason")
-        } else {
-            logger.debug("Switching unauthenticated connection to fallback: $reason", cause)
-        }
+        logger.info("Switching unauthenticated connection to fallback: $reason", cause)
         val fallbackHandler = fallbackHandlerFactory.newForwardHandler(initByteBuf)
         val currentHandlerName = ctx.name()
         ctx.pipeline().apply {

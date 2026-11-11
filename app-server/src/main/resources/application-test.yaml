@@ -1,0 +1,17 @@
+# 服务配置
+server:
+  port: 443
+  reality:
+    private-key: "yKS-FR9h3VME_eC3OGQMwX2FAHMenKGl18PjisAPFVU"
+    short-ids: [ "98653321" ]
+    acceptable-snis: [ "httpbin.org", "www.httpbin.org" ]
+    fallback-dest:
+      host: "httpbin.org"
+      port: 443
+    allowed-clock-skew-seconds: 60
+
+# 日志
+logging:
+  config: classpath:logback-config-test&prod.xml
+  files:
+    path: 'D:\logs\test\'

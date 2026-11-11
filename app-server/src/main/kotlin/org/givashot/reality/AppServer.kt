@@ -10,6 +10,7 @@ import io.netty.channel.socket.nio.NioServerSocketChannel
 import io.netty.handler.timeout.ReadTimeoutHandler
 import io.netty.util.AttributeKey
 import org.givashot.reality.authentication.Authenticator
+import org.givashot.reality.config.configureLogging
 import org.givashot.reality.config.loadAppConfig
 import org.givashot.reality.handler.LoggerHandler
 import org.givashot.reality.handler.RealityTlsConnectionHandler
@@ -19,12 +20,12 @@ import org.givashot.reality.handler.VlessDuplexHandler
 import org.slf4j.LoggerFactory
 import java.util.concurrent.atomic.AtomicInteger
 
-private val logger = LoggerFactory.getLogger("org.givashot.reality.AppServer")
-
 val CONNECTION_NUM_KEY: AttributeKey<Int> = AttributeKey.valueOf("CONNECTION_NUM_KEY")
 
 fun main() {
     val config = loadAppConfig()
+    configureLogging(config)
+    val logger = LoggerFactory.getLogger("org.givashot.reality.AppServer")
     val boss = MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory())
     val workers = MultiThreadIoEventLoopGroup(0, NioIoHandler.newFactory())
     try {
@@ -59,7 +60,7 @@ fun main() {
             .channel()
         logger.info(
             "Reality server started on port {}, " +
-                    "\n config = {}" +
+                    "\n AppConfig = {}" +
                     "\n handshakeRecordProfile = {}",
             config.server.port,
             config,

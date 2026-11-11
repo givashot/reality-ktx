@@ -19,12 +19,12 @@ dependencies {
     implementation(libs.bctls)
     implementation(libs.bcpkix)
     implementation(libs.slf4jApi)
-    runtimeOnly(libs.logbackClassic)
+    implementation(libs.logbackClassic)
     testImplementation(kotlin("test"))
 }
 
 application {
     // Define the Fully Qualified Name for the application main class
     // (Note that Kotlin compiles `App.kt` to a class with FQN `com.example.app.AppKt`.)
-    mainClass = "org.givashot.reality.AppServer"
+    mainClass = "org.givashot.reality.AppServerKt"
 }

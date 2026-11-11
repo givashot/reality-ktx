@@ -14,7 +14,7 @@ class LoggerHandler : ChannelDuplexHandler() {
     private lateinit var logger: Logger
 
     override fun handlerAdded(ctx: ChannelHandlerContext) {
-        logger = LoggerFactory.getLogger("TlsConnectionHandler#${ctx.channel().attr(CONNECTION_NUM_KEY).get()}")
+        logger = LoggerFactory.getLogger("LoggerHandler#${ctx.channel().attr(CONNECTION_NUM_KEY).get()}")
     }
 
     override fun channelRead(ctx: ChannelHandlerContext?, msg: Any?) {
