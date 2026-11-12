@@ -11,7 +11,8 @@ class VisionPaddingPolicy(
 ) {
 
     init {
-        require(longPaddingThreshold >= 0 && longPaddingBase >= 0) { "Padding thresholds must not be negative" }
+        require(longPaddingThreshold > 0 && longPaddingBase > 0) { "Padding thresholds must be positive" }
+        require(longPaddingBase > longPaddingThreshold) { "Padding base must greater than threshold" }
         require(longPaddingRandomBound > 0 && shortPaddingRandomBound > 0) { "Padding random bounds must be positive" }
         require(nonPaddingThreshold > 0) { "Non padding threshold must be positive" }
     }
@@ -22,7 +23,7 @@ class VisionPaddingPolicy(
     fun paddingLength(contentLength: Int, longPadding: Boolean, random: RandomGenerator): Int {
         return if (contentLength < nonPaddingThreshold) {
             if (contentLength < longPaddingThreshold && longPadding) {
-                (longPaddingBase + random.nextInt(longPaddingRandomBound) - contentLength).coerceAtLeast(0)
+                longPaddingBase + random.nextInt(longPaddingRandomBound) - contentLength
             } else {
                 random.nextInt(shortPaddingRandomBound)
             }
