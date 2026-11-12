@@ -38,19 +38,19 @@ internal class Tls13HandshakeCodec {
                 "ClientHello size ${message.encodedBytes.size} exceeds limit $TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH"
             )
         }
-        val encoded = message.encodedBytes
-        if (encoded.size < TLS_HANDSHAKE_HEADER_LENGTH + 35) {
+        val body = message.body
+        if (body.size < TLS_HANDSHAKE_SESSION_ID_LENGTH_OFFSET_BASE_BODY + 1) {
             throw DecodeErrorException("ClientHello is truncated")
         }
-        val sessionIdLengthOffset = TLS_HANDSHAKE_HEADER_LENGTH + 2 + 32
-        val sessionIdLength = encoded[sessionIdLengthOffset].toInt() and 0xFF
+        val sessionIdLengthOffset = TLS_HANDSHAKE_SESSION_ID_LENGTH_OFFSET_BASE_BODY
+        val sessionIdLength = body[sessionIdLengthOffset].toInt() and 0xFF
         val sessionIdOffset = sessionIdLengthOffset + 1
-        if (sessionIdOffset + sessionIdLength > encoded.size) {
+        if (sessionIdOffset + sessionIdLength > body.size) {
             throw DecodeErrorException("ClientHello session ID is truncated")
         }
         val parsed = try {
             ClientHello.parse(
-                ByteArrayInputStream(encoded, TLS_HANDSHAKE_HEADER_LENGTH, encoded.size - TLS_HANDSHAKE_HEADER_LENGTH),
+                ByteArrayInputStream(body, 0, body.size),
                 null,
             )
         } catch (e: Exception) {
@@ -60,7 +60,7 @@ internal class Tls13HandshakeCodec {
             throw DecodeErrorException("ClientHello session ID length mismatch")
 
         }
-        return ClientHelloWrapper(parsed, encoded, sessionIdOffset)
+        return ClientHelloWrapper(parsed, message.encodedBytes, TLS_HANDSHAKE_HEADER_LENGTH + sessionIdOffset)
     }
 
     /** Returns the verify_data, which must be exactly [verifyDataLength] bytes (the hash length of the suite). */
@@ -84,7 +84,7 @@ internal class Tls13HandshakeCodec {
         return KeyUpdate(requestUpdate)
     }
 
-    fun encodeServerHello(serverHello: ServerHello): ByteArray{
+    fun encodeServerHello(serverHello: ServerHello): ByteArray {
         val body = ByteArrayOutputStream()
         serverHello.encode(null, body)
         return tlsHandshakeMessage(TLS_HANDSHAKE_CONTENT_TYPE_SERVER_HELLO, body.toByteArray())

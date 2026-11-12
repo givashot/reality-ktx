@@ -8,7 +8,7 @@ import java.util.*
 data class ClientHelloWrapper(
     val base: ClientHello,
     val handshakeAndBody: ByteArray,
-    val sessionIdOffset: Int,
+    val sessionIdOffsetBaseHandshake: Int,
 ) {
 
     /**
@@ -60,7 +60,7 @@ data class ClientHelloWrapper(
     }
 
     fun aadWithZeroedSessionId(): ByteArray = handshakeAndBody.copyOf().also {
-        it.fill(0, sessionIdOffset, sessionIdOffset + base.sessionID.size)
+        it.fill(0, sessionIdOffsetBaseHandshake, sessionIdOffsetBaseHandshake + base.sessionID.size)
     }
 
 }

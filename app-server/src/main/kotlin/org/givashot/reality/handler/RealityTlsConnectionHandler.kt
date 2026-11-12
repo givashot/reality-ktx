@@ -1,6 +1,7 @@
 package org.givashot.reality.handler
 
 import io.netty.buffer.ByteBuf
+import io.netty.buffer.ByteBufUtil
 import io.netty.buffer.Unpooled
 import io.netty.channel.*
 import io.netty.handler.timeout.IdleStateHandler
@@ -50,12 +51,8 @@ class RealityTlsConnectionHandler(
     private var outboundPassthrough = false
     private var readingTls = false
 
-    override fun handlerAdded(ctx: ChannelHandlerContext) {
-        context = ctx
-        logger = LoggerFactory.getLogger("TlsConnectionHandler#${ctx.channel().attr(CONNECTION_NUM_KEY).get()}")
-    }
-
     override fun stopDecrypting() {
+        logger.info("Stop decrypting called")
         if (inboundPassthrough) return
         inboundPassthrough = true
         // While records are being read, the read loop hands over the undecrypted rest once it unwinds.
@@ -63,7 +60,13 @@ class RealityTlsConnectionHandler(
     }
 
     override fun stopEncrypting() {
+        logger.info("Stop encrypting called")
         outboundPassthrough = true
+    }
+
+    override fun handlerAdded(ctx: ChannelHandlerContext) {
+        context = ctx
+        logger = LoggerFactory.getLogger("TlsConnectionHandler#${ctx.channel().attr(CONNECTION_NUM_KEY).get()}")
     }
 
     override fun channelRead(ctx: ChannelHandlerContext, input: Any) {
@@ -108,9 +111,85 @@ class RealityTlsConnectionHandler(
         }
     }
 
-    private fun forwardUndecryptedInbound(ctx: ChannelHandlerContext) {
-        val rest = tlsConnection.drainUndecryptedInbound()
-        if (rest.isNotEmpty()) ctx.fireChannelRead(Unpooled.wrappedBuffer(rest))
+    override fun write(ctx: ChannelHandlerContext, output: Any, promise: ChannelPromise) {
+        if (!outboundPassthrough && output is ByteBuf && tlsConnection.state == TlsState.Established) {
+            try {
+                val dump = ByteBufUtil.hexDump(
+                    output, output.readerIndex(),
+                    output.readableBytes().coerceAtMost(Int.MAX_VALUE)
+                )
+                logger.info("write outbound application bytes, size = ${output.readableBytes()}, dump_content = $dump")
+                val bytes = ByteArray(output.readableBytes())
+                output.getBytes(output.readerIndex(), bytes)
+                val records = tlsConnection.execute(TlsCommand.SendApplicationData(bytes))
+                val msg = Unpooled.wrappedBuffer(*records.toTypedArray())
+                super.write(ctx, msg, promise)
+            } finally {
+                output.release()
+            }
+            return
+        }
+        super.write(ctx, output, promise)
+    }
+
+    override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
+        logger.error("exception caught", cause)
+        if (authenticated) {
+            if (cause is TlsUsageException) {
+                closeAfterWrite(
+                    ctx,
+                    writeOutbound(ctx, cause.replyAlertRecord),
+                    cause.message,
+                    cause
+                )
+            } else {
+                close(ctx, "TLS connection handler failed", cause)
+            }
+        } else {
+            switchToFallback(ctx, "TLS connection handler failed", cause)
+        }
+    }
+
+    override fun close(ctx: ChannelHandlerContext, promise: ChannelPromise?) {
+        logger.info("close called")
+        // the proxy dest closed the connection
+        if (!outboundPassthrough) {
+            // we hold the outer tls connection, we should seed close notify
+            val records = tlsConnection.execute(TlsCommand.Close)
+            writeOutbound(ctx, *records.toTypedArray())
+                .addListener {
+                    super.close(ctx, promise)
+                }
+        } else {
+            // we not hold tls connection, just close
+            super.close(ctx, promise)
+        }
+    }
+
+    override fun channelInactive(ctx: ChannelHandlerContext) {
+        logger.info("channelInactive called")
+        tlsConnection.close(ctx.channel().attr(CLOSE_CAUSE_KEY).get())
+        initByteBuf?.release()
+        super.channelInactive(ctx)
+    }
+
+    private fun writeOutbound(ctx: ChannelHandlerContext, vararg records: ByteArray): ChannelFuture =
+        if (outboundPassthrough) ctx.newSucceededFuture() else ctx.writeAndFlush(Unpooled.wrappedBuffer(*records))
+
+    private fun close(ctx: ChannelHandlerContext, reason: String? = null, cause: Throwable? = null) {
+        logger.info("manual close called with reason = $reason in TLS state ${tlsConnection.state}", cause)
+        if (!ctx.channel().isActive) return
+        ctx.channel().attr(CLOSE_CAUSE_KEY).set(cause)
+        ctx.close()
+    }
+
+    private fun closeAfterWrite(
+        ctx: ChannelHandlerContext,
+        writeFuture: ChannelFuture,
+        reason: String? = null,
+        cause: Throwable? = null
+    ) {
+        writeFuture.addListener(ChannelFutureListener { close(ctx, reason, cause) })
     }
 
     private fun handleClientEvent(ctx: ChannelHandlerContext, event: TlsClientEvent) {
@@ -149,10 +228,8 @@ class RealityTlsConnectionHandler(
             }
 
             is TlsClientEvent.ClientApplicationData -> {
-                val logBytes = ByteArray(event.data.size.coerceAtMost(100))
-                event.data.copyInto(logBytes, endIndex = logBytes.size - 1)
-                val logHexBytes = logBytes.map { it.toHexString() }
-                logger.info("received inbound application bytes, size = ${event.data.size}, content =  $logHexBytes")
+                val dump = ByteBufUtil.hexDump(event.data, 0, event.data.size.coerceAtMost(Int.MAX_VALUE))
+                logger.info("received inbound application bytes, size = ${event.data.size}, dump_content =  $dump")
                 ctx.fireChannelRead(Unpooled.wrappedBuffer(event.data))
             }
 
@@ -181,83 +258,8 @@ class RealityTlsConnectionHandler(
         }
     }
 
-    override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
-        if (authenticated) {
-            if (cause is TlsUsageException) {
-                closeAfterWrite(
-                    ctx,
-                    writeOutbound(ctx, cause.replyAlertRecord),
-                    cause.message,
-                    cause
-                )
-            } else {
-                close(ctx, "TLS connection handler failed", cause)
-            }
-        } else {
-            switchToFallback(ctx, "TLS connection handler failed", cause)
-        }
-    }
-
-    override fun channelInactive(ctx: ChannelHandlerContext) {
-        tlsConnection.close(ctx.channel().attr(CLOSE_CAUSE_KEY).get())
-        initByteBuf?.release()
-        super.channelInactive(ctx)
-    }
-
-    override fun write(ctx: ChannelHandlerContext, output: Any, promise: ChannelPromise) {
-        if (!outboundPassthrough && output is ByteBuf && tlsConnection.state == TlsState.Established) {
-            try {
-                val bytes = ByteArray(output.readableBytes())
-                output.getBytes(output.readerIndex(), bytes)
-                val logBytes = ByteArray(bytes.size.coerceAtMost(100))
-                bytes.copyInto(logBytes, endIndex = logBytes.size - 1)
-                val logHexBytes = logBytes.map { it.toHexString() }
-                logger.warn("write outbound application bytes, size = ${bytes.size}, content = $logHexBytes")
-                val records = tlsConnection.execute(TlsCommand.SendApplicationData(bytes))
-                val msg = Unpooled.wrappedBuffer(*records.toTypedArray())
-                super.write(ctx, msg, promise)
-            } finally {
-                output.release()
-            }
-            return
-        }
-        super.write(ctx, output, promise)
-    }
-
-    override fun close(ctx: ChannelHandlerContext, promise: ChannelPromise?) {
-        // The peer no longer reads TLS records, so a close_notify would corrupt its stream.
-        if (outboundPassthrough) {
-            super.close(ctx, promise)
-            return
-        }
-        val records = tlsConnection.execute(TlsCommand.Close)
-        writeOutbound(ctx, *records.toTypedArray())
-            .addListener {
-                super.close(ctx, promise)
-            }
-    }
-
-    private fun writeOutbound(ctx: ChannelHandlerContext, vararg records: ByteArray): ChannelFuture =
-        if (outboundPassthrough) ctx.newSucceededFuture() else ctx.writeAndFlush(Unpooled.wrappedBuffer(*records))
-
-    private fun close(ctx: ChannelHandlerContext, reason: String? = null, cause: Throwable? = null) {
-        if (!ctx.channel().isActive) return
-        ctx.channel().attr(CLOSE_CAUSE_KEY).set(cause)
-        logger.warn("${reason.toString()} in TLS state ${tlsConnection.state}", cause)
-        ctx.close()
-    }
-
-    private fun closeAfterWrite(
-        ctx: ChannelHandlerContext,
-        writeFuture: ChannelFuture,
-        reason: String? = null,
-        cause: Throwable? = null
-    ) {
-        writeFuture.addListener(ChannelFutureListener { close(ctx, reason, cause) })
-    }
-
     private fun sendServerFlight(ctx: ChannelHandlerContext, authKey: ByteArray) {
-        logger.warn("sendServerFlight called")
+        logger.info("sendServerFlight called")
         val certificate = applyAuthKeySignature(authKey)
         val reply = tlsConnection.execute(
             TlsCommand.SendServerFlight(
@@ -291,6 +293,18 @@ class RealityTlsConnectionHandler(
             addAfter(ctx.name(), fallbackHandler::class.java.simpleName, fallbackHandler)
             remove(this@RealityTlsConnectionHandler)
         }
+    }
+
+    private fun forwardUndecryptedInbound(ctx: ChannelHandlerContext) {
+        val rest = tlsConnection.drainUndecryptedInbound()
+        if (rest.isNotEmpty()) {
+            ctx.fireChannelRead(Unpooled.wrappedBuffer(rest))
+        }
+        logger.info(
+            "forwardUndecryptedInbound called, rest.size = ${rest.size}, dump_content = ${
+                ByteBufUtil.hexDump(rest, 0, rest.size.coerceAtMost(Int.MAX_VALUE))
+            }"
+        )
     }
 
 }

@@ -1,43 +1,39 @@
 package org.givashot.tunnel.vless.vision
 
-import org.givashot.tunnel.vless.const.VISION_MAX_CHUNK_SIZE
-import org.givashot.tunnel.vless.const.VISION_MAX_FRAME_OVERHEAD
 import java.util.random.RandomGenerator
 
-/**
- * How much padding Vision adds to a frame, equivalent to Xray's `testseed`. It is a local choice that does not
- * appear on the wire, so it may differ between the two ends.
- *
- * Content shorter than [longPaddingThreshold] in long-padding mode (used while the inner TLS handshake is
- * running) gets `random(longPaddingRandomBound) + longPaddingBase - content` bytes, so that the frame hides its
- * content length; any other frame gets `random(shortPaddingRandomBound)` bytes.
- */
 class VisionPaddingPolicy(
-    val longPaddingThreshold: Int = 900,
-    val longPaddingRandomBound: Int = 500,
-    val longPaddingBase: Int = 900,
-    val shortPaddingRandomBound: Int = 256,
+    val longPaddingThreshold: Int = 800,
+    val longPaddingBase: Int = 1000,
+    val longPaddingRandomBound: Int = 400,
+    val shortPaddingRandomBound: Int = 128,
+    val nonPaddingThreshold: Int = longPaddingBase + longPaddingRandomBound
 ) {
 
     init {
         require(longPaddingThreshold >= 0 && longPaddingBase >= 0) { "Padding thresholds must not be negative" }
         require(longPaddingRandomBound > 0 && shortPaddingRandomBound > 0) { "Padding random bounds must be positive" }
+        require(nonPaddingThreshold > 0) { "Non padding threshold must be positive" }
     }
 
-    /** The padding length for a frame, never leaving the frame larger than [VISION_MAX_CHUNK_SIZE]. */
+    /**
+     * The padding length for a frame
+     */
     fun paddingLength(contentLength: Int, longPadding: Boolean, random: RandomGenerator): Int {
-        val length = if (contentLength < longPaddingThreshold && longPadding) {
-            random.nextInt(longPaddingRandomBound) + longPaddingBase - contentLength
+        return if (contentLength < nonPaddingThreshold) {
+            if (contentLength < longPaddingThreshold && longPadding) {
+                (longPaddingBase + random.nextInt(longPaddingRandomBound) - contentLength).coerceAtLeast(0)
+            } else {
+                random.nextInt(shortPaddingRandomBound)
+            }
         } else {
-            random.nextInt(shortPaddingRandomBound)
+            0
         }
-        return length.coerceIn(0, maxOf(0, VISION_MAX_CHUNK_SIZE - VISION_MAX_FRAME_OVERHEAD - contentLength))
     }
 
     companion object {
         val DEFAULT = VisionPaddingPolicy()
 
-        /** Builds a policy from Xray's `testseed` list; fewer than four values select [DEFAULT], as in Xray. */
         fun fromTestSeed(values: List<Int>?): VisionPaddingPolicy =
             if (values == null || values.size < 4) {
                 DEFAULT

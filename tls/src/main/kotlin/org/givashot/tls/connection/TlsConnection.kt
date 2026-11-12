@@ -13,7 +13,6 @@ import java.security.GeneralSecurityException
  * lifecycle and KeyUpdate decisions live in TlsStateMachine, protection in TlsRecordLayer, secrets in Tls13ServerHandshake.
  */
 class TlsConnection internal constructor(
-    private val profile: ServerProfile,
     private val stateMachine: TlsStateMachine,
     private val recordLayer: TlsRecordLayer,
     private val handshake: Tls13ServerHandshake,
@@ -137,10 +136,14 @@ class TlsConnection internal constructor(
 
         val flight = handshake.buildServerFlight(command.encryptedExtensions, command.certificate)
         val serverHelloRecord = recordLayer.encode(TLS_CONTENT_TYPE_HANDSHAKE, flight.serverHello)
+        val replyTlsRecords = arrayListOf(serverHelloRecord)
+        if (handshake.hasLegacySessionId) {
+            replyTlsRecords.add(recordLayer.encode(TLS_CONTENT_TYPE_CCS, byteArrayOf(1)))
+        }
         val handshakeTrafficSecrets = handshake.handshakeTrafficSecrets
         recordLayer.installWriteProtection(handshakeTrafficSecrets.serverTrafficKeys())
         recordLayer.installReadProtection(handshakeTrafficSecrets.clientTrafficKeys())
-        val replyTlsRecords = arrayListOf(serverHelloRecord).apply {
+        replyTlsRecords.apply {
             addAll(
                 recordLayer.encode(
                     TLS_CONTENT_TYPE_HANDSHAKE,
@@ -254,9 +257,8 @@ class TlsConnection internal constructor(
 
     companion object {
         fun create(profile: ServerProfile): TlsConnection = TlsConnection(
-            profile = profile,
             stateMachine = TlsStateMachine(),
-            recordLayer = TlsRecordLayer(profile.maxRecordSize),
+            recordLayer = TlsRecordLayer(TLS_MAX_RECORD_SIZE),
             handshake = Tls13ServerHandshake(profile),
         )
     }

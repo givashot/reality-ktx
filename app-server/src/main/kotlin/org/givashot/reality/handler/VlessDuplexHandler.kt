@@ -95,7 +95,7 @@ class VlessDuplexHandler(
         msg.release()
 
         val visionFrame = frameCodec.serverEncode(bytes)
-        ctx.write(Unpooled.wrappedBuffer(visionFrame), promise)
+        super.write(ctx, Unpooled.wrappedBuffer(visionFrame), promise)
         // The frames above were encrypted synchronously, so what follows may leave the outer TLS layer.
         if (!directWriteSwitched
             && !frameCodec.serverEncoder.encoding

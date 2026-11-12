@@ -18,6 +18,7 @@ internal fun negotiate(clientHello: ClientHelloWrapper, profile: ServerProfile):
     val cipherSuiteId = when (profile.cipherSelection) {
         ServerProfile.CipherSelectionMode.CLIENT_PREFERENCE ->
             clientSuites.firstOrNull { it in profile.cipherSuites }
+
         ServerProfile.CipherSelectionMode.SERVER_PREFERENCE ->
             profile.cipherSuites.firstOrNull { it in clientSuites }
     } ?: throw NegotiationFailedException("No mutually supported TLS 1.3 cipher suite")
@@ -37,8 +38,11 @@ internal fun newServerHello(
     val serverPublicKey = serverPrivate.deriveX25519PublicKey()
 
     val serverExtensions = Hashtable<Int, Any>()
+    TlsExtensionsUtils.addKeyShareServerHello(
+        serverExtensions,
+        KeyShareEntry(negotiated.namedGroup, serverPublicKey)
+    )
     TlsExtensionsUtils.addSupportedVersionsExtensionServer(serverExtensions, negotiated.version)
-    TlsExtensionsUtils.addKeyShareServerHello(serverExtensions, KeyShareEntry(negotiated.namedGroup, serverPublicKey))
 
     val serverHello = ServerHello(
         ProtocolVersion.TLSv12,

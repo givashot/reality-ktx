@@ -12,12 +12,6 @@ const val VISION_COMMAND_PADDING_DIRECT = 2
 /** command (1) | content length (2) | padding length (2). */
 const val VISION_FRAME_HEADER_LENGTH = 5
 
-/** Xray's `buf.Size`: the largest chunk a Vision frame is built from. */
-const val VISION_MAX_CHUNK_SIZE = 8192
-
-/** Worst-case frame overhead without the UUID prefix, kept free when padding. */
-const val VISION_MAX_FRAME_OVERHEAD = 21
-
 /**
  * Max padding handshake tls record count server side
  * HRR + SH + CCS + EE + CR + Certificate + CV + FINISHED

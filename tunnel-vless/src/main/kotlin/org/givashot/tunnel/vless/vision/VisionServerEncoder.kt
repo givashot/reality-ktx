@@ -89,15 +89,20 @@ class VisionServerEncoder(
 
     private fun HandshakeMessage.supportDirectRelay(): Boolean {
         require(this.type == TLS_HANDSHAKE_CONTENT_TYPE_SERVER_HELLO) { "handshake message must be server hello" }
-        val cipherSuiteOffset = TLS_HANDSHAKE_SESSION_ID_OFFSET_BASE_BODY +
-                body[TLS_HANDSHAKE_SESSION_ID_OFFSET_BASE_BODY].unsigned() +
+        if (TLS_HANDSHAKE_SESSION_ID_LENGTH_OFFSET_BASE_BODY + 1 > body.size) {
+            return false
+        }
+        val cipherSuiteOffset = TLS_HANDSHAKE_SESSION_ID_LENGTH_OFFSET_BASE_BODY +
+                body[TLS_HANDSHAKE_SESSION_ID_LENGTH_OFFSET_BASE_BODY].unsigned() +
                 1
-        if (cipherSuiteOffset + 2 > body.size) return false
+        if (cipherSuiteOffset + 2 > body.size) {
+            return false
+        }
         val cipherSuite = (body[cipherSuiteOffset].unsigned() shl 8) or body[cipherSuiteOffset + 1].unsigned()
         if (cipherSuite in TLS13_CIPHER_SUITES && cipherSuite != TLS_AES_128_CCM_8_SHA256) {
             fun ByteArray.contains(another: ByteArray): Boolean {
                 for (i in indices) {
-                    if (this[i] == another[0]) {
+                    if (this[i] == another[0] && this@contains.size >= i + another.size) {
                         for (j in 1 until another.size) {
                             if (this[i + j] == another[j]) {
                                 if (j == another.size - 1) {

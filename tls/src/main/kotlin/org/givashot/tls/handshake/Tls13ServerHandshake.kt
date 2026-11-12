@@ -24,6 +24,9 @@ internal class Tls13ServerHandshake(
     val applicationTrafficSecrets: ApplicationTrafficSecrets
         get() = checkNotNull(state.applicationTrafficSecrets) { "Application secrets are not available yet" }
 
+    val hasLegacySessionId: Boolean
+        get() = checkNotNull(state.clientHello) { "ClientHello has not been received" }.base.sessionID.isNotEmpty()
+
     fun reset() {
         state.reset()
         codec.reset()
