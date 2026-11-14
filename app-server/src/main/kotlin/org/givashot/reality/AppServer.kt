@@ -12,10 +12,10 @@ import io.netty.util.AttributeKey
 import org.givashot.reality.authentication.Authenticator
 import org.givashot.reality.config.configureLogging
 import org.givashot.reality.config.loadAppConfig
-import org.givashot.reality.handler.LoggerHandler
-import org.givashot.reality.handler.RealityTlsConnectionHandler
 import org.givashot.reality.fallback.FallbackHandlerFactory
 import org.givashot.reality.fallback.FallbackHandshakeRecordModel
+import org.givashot.reality.handler.LoggerHandler
+import org.givashot.reality.handler.RealityTlsConnectionHandler
 import org.givashot.reality.handler.VlessDuplexHandler
 import org.slf4j.LoggerFactory
 import java.util.concurrent.atomic.AtomicInteger
@@ -45,14 +45,19 @@ fun main() {
                     ch.pipeline().channel().attr(CONNECTION_NUM_KEY).set(connectionNum.incrementAndGet())
                     ch.pipeline().addLast(ReadTimeoutHandler::class.java.simpleName, ReadTimeoutHandler(10))
                     ch.pipeline().addLast(LoggerHandler::class.java.simpleName, LoggerHandler())
-                    ch.pipeline().addLast(
-                        RealityTlsConnectionHandler::class.java.simpleName, RealityTlsConnectionHandler(
-                            authenticator = authenticator,
-                            handshakeRecordProfile = handshakeRecordProfile,
-                            fallbackHandlerFactory = fallbackHandlerFactory,
-                        )
+                    val tlsConnectionHandler = RealityTlsConnectionHandler(
+                        authenticator = authenticator,
+                        handshakeRecordProfile = handshakeRecordProfile,
+                        fallbackHandlerFactory = fallbackHandlerFactory,
                     )
-                    ch.pipeline().addLast(VlessDuplexHandler::class.java.simpleName, VlessDuplexHandler())
+                    ch.pipeline().addLast(
+                        RealityTlsConnectionHandler::class.java.simpleName,
+                        tlsConnectionHandler
+                    )
+                    ch.pipeline().addLast(
+                        VlessDuplexHandler::class.java.simpleName,
+                        VlessDuplexHandler(tlsOuterBypass = tlsConnectionHandler)
+                    )
                 }
             })
             .bind(config.server.port)

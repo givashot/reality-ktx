@@ -1,8 +1,6 @@
 package org.givashot.tunnel.vless
 
-import org.givashot.tunnel.vless.const.VLESS_COMMAND_TYPE_MUX
 import org.givashot.tunnel.vless.const.VLESS_COMMAND_TYPE_TCP
-import org.givashot.tunnel.vless.const.VLESS_COMMAND_TYPE_UDP
 import org.givashot.tunnel.vless.const.VLESS_FLOW_NONE
 import org.givashot.tunnel.vless.const.VLESS_FLOW_XTLS_RPRX_VISION
 
@@ -20,19 +18,17 @@ class VlessFlowPolicy(val allowedFlows: Set<String> = setOf(VLESS_FLOW_NONE, VLE
     }
 
     /** @return the reason the request must be rejected, or null when it is acceptable. */
-    fun check(header: VlessRequestHeader): String? = check(header.flow, header.command)
-
-    fun check(flow: String, command: Int): String? = when {
-        flow !in KNOWN_FLOWS -> "unknown VLESS flow '$flow'"
-        flow == VLESS_FLOW_XTLS_RPRX_VISION && command == VLESS_COMMAND_TYPE_UDP ->
-            "VLESS flow '$flow' does not support UDP"
-
-        flow in allowedFlows -> null
-        // Xray still lets UDP through without a flow, since such a stream is not a TLS-in-TLS tunnel.
-        flow == VLESS_FLOW_NONE ->
-            if (command == VLESS_COMMAND_TYPE_TCP || command == VLESS_COMMAND_TYPE_MUX) "VLESS flow is required" else null
-
-        else -> "VLESS flow '$flow' is not allowed"
+    fun check(header: VlessRequestHeader): String? {
+        val flow = header.flow
+        val command = header.command
+        return when {
+            command != VLESS_COMMAND_TYPE_TCP -> "unsupported VLESS command ${header.command}"
+            header.port == 0 -> "VLESS target port must not be 0"
+            header.host.isEmpty() -> "VLESS target host must not be empty"
+            flow !in KNOWN_FLOWS -> "unknown VLESS flow '$flow'"
+            flow != VLESS_FLOW_XTLS_RPRX_VISION -> "VLESS flow '$flow' is not allowed"
+            else -> null
+        }
     }
 
     private companion object {

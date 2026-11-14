@@ -5,7 +5,7 @@ package org.givashot.reality.handler
  * once the proxied traffic is itself TLS, as XTLS Vision's direct copy does. Both calls happen on the channel's
  * event loop and are irreversible.
  */
-interface OuterEncryptionBypass {
+interface TlsOuterEncryptionBypass {
 
     /**
      * Stops decrypting what the peer sends: from now on received bytes are passed up as they are. Bytes that were

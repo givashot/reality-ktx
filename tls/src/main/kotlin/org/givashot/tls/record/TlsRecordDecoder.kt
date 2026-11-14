@@ -44,6 +44,8 @@ class TlsRecordDecoder(private val maxRecordSize: Int = TLS_MAX_RECORD_SIZE) {
         return bytes
     }
 
+    fun bufferSize(): Int = buffered.size
+
     fun reset() {
         buffered.clear()
     }

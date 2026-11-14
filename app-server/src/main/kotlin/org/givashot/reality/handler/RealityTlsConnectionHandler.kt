@@ -4,7 +4,6 @@ import io.netty.buffer.ByteBuf
 import io.netty.buffer.ByteBufUtil
 import io.netty.buffer.Unpooled
 import io.netty.channel.*
-import io.netty.handler.timeout.IdleStateHandler
 import io.netty.handler.timeout.ReadTimeoutHandler
 import io.netty.util.AttributeKey
 import org.givashot.reality.CONNECTION_NUM_KEY
@@ -27,7 +26,7 @@ class RealityTlsConnectionHandler(
     private val authenticator: Authenticator,
     private val handshakeRecordProfile: HandshakeRecordProfile,
     private val fallbackHandlerFactory: FallbackHandlerFactory,
-) : ChannelDuplexHandler(), OuterEncryptionBypass {
+) : ChannelDuplexHandler(), TlsOuterEncryptionBypass {
 
     companion object {
         private const val IDLE_TIMEOUT_SECONDS = 300
@@ -218,14 +217,7 @@ class RealityTlsConnectionHandler(
                 }
             }
 
-            TlsClientEvent.ClientFinished -> {
-                // handshake done, switch to long-live connection
-                ctx.pipeline().get(ReadTimeoutHandler::class.java)?.let { ctx.pipeline().remove(it) }
-                ctx.pipeline().addBefore(
-                    ctx.name(), IdleStateHandler::class.java.simpleName,
-                    IdleStateHandler(0, 0, IDLE_TIMEOUT_SECONDS)
-                )
-            }
+            TlsClientEvent.ClientFinished -> Unit
 
             is TlsClientEvent.ClientApplicationData -> {
                 val dump = ByteBufUtil.hexDump(event.data, 0, event.data.size.coerceAtMost(Int.MAX_VALUE))

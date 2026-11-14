@@ -3,16 +3,17 @@ package org.givashot.tunnel.vless.vision
 import java.util.random.RandomGenerator
 
 class VisionPaddingPolicy(
-    val longPaddingThreshold: Int = 800,
-    val longPaddingBase: Int = 1000,
-    val longPaddingRandomBound: Int = 400,
+    val longPaddingThreshold: Int = 1000,
+    val longPaddingBase: Int = 1400,
+    val longPaddingRandomBound: Int = 800,
     val shortPaddingRandomBound: Int = 128,
-    val nonPaddingThreshold: Int = longPaddingBase + longPaddingRandomBound
+    val nonPaddingThreshold: Int = 2048
 ) {
 
     init {
-        require(longPaddingThreshold > 0 && longPaddingBase > 0) { "Padding thresholds must be positive" }
-        require(longPaddingBase > longPaddingThreshold) { "Padding base must greater than threshold" }
+        require(longPaddingThreshold > 0) { "Long Padding thresholds must be positive" }
+        require(longPaddingBase > 0) { "Long Padding Base must be positive" }
+        require(longPaddingBase > longPaddingThreshold) { "Long Padding base must greater than threshold" }
         require(longPaddingRandomBound > 0 && shortPaddingRandomBound > 0) { "Padding random bounds must be positive" }
         require(nonPaddingThreshold > 0) { "Non padding threshold must be positive" }
     }

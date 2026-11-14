@@ -34,8 +34,8 @@ class LoggerHandler : ChannelDuplexHandler() {
     private fun logMessage(direction: String, msg: Any?) {
         if (msg is ByteBuf) {
             val length = msg.readableBytes()
-            val prefix = ByteBufUtil.hexDump(msg, msg.readerIndex(), minOf(length, Int.MAX_VALUE))
-            logger.info("{} -> length={}, firstBytes={}", direction, length, prefix)
+            val dumpBytes = ByteBufUtil.hexDump(msg, msg.readerIndex(), minOf(length, Int.MAX_VALUE))
+            logger.info("{} -> length={}, dumpBytes={}", direction, length, dumpBytes)
         } else {
             logger.info("{} -> {}", direction, msg)
         }

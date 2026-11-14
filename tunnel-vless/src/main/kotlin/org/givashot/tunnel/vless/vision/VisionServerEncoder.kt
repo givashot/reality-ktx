@@ -29,6 +29,8 @@ class VisionServerEncoder(
      */
     var supportDirectRelay: Boolean? = null
 
+    private var detectedCCS = false
+
     fun encode(input: ByteArray): ByteArray {
         check(encoding) { "when encode end or direct relay, cannot encode anymore" }
         if (tlsConnection == false) {
@@ -36,12 +38,16 @@ class VisionServerEncoder(
         }
         try {
             val tlsRecords = tlsRecordDecoder.feed(input)
+            var command = VISION_COMMAND_PADDING_CONTINUE
             if (tlsRecords.isNotEmpty()) {
                 tlsConnection = true
                 val handshakeMessages = arrayListOf<HandshakeMessage>()
                 tlsRecords.forEach { tlsRecord ->
                     if (tlsRecord.contentType == TLS_CONTENT_TYPE_HANDSHAKE) {
                         handshakeMessages.addAll(handshakeMessageDecoder.feed(tlsRecord.payload))
+                    }
+                    if (tlsRecord.contentType == TLS_CONTENT_TYPE_CCS) {
+                        detectedCCS = true
                     }
                 }
                 if (handshakeMessages.isNotEmpty()) {
@@ -51,12 +57,17 @@ class VisionServerEncoder(
                         }
                     }
                 }
-                var command = VISION_COMMAND_PADDING_CONTINUE
-                val ccsCount = tlsRecords.sumOf { tlsRecord ->
-                    if (tlsRecord.contentType == TLS_CONTENT_TYPE_CCS) 1 else 0
-                }
-                paddingCount += (tlsRecords.size - ccsCount)
-                if (paddingCount >= VISION_MAX_PADDING_COUNT_OVER_TLS_SERVER_SIDE) {
+                paddingCount += tlsRecords.size
+                val tls13CipherTextPhase = supportDirectRelay == true && detectedCCS
+                if ((tls13CipherTextPhase || paddingCount >= VISION_MAX_PADDING_COUNT_OVER_TLS_SERVER_SIDE)
+                    && tlsRecordDecoder.bufferSize() == 0
+                ) {
+                    // when tls13CipherTextPhase or paddingCount reached the max, and reached the boundary of tls record
+                    // we do not padding anymore in the next frame
+                    // in tls13CipherTextPhase case, means we're only padding the frame(contains server hello, ccs)
+                    // the next frame normally are 0x17 tls record, and we do not padding
+                    // most server response one tls record with a server flight(EE + CR + Certificate + CV + FINISHED) after server hello
+                    // the server flight tls record are no observable length fingerprinter, so we do not padding
                     command = if (supportDirectRelay == true) {
                         VISION_COMMAND_PADDING_DIRECT
                     } else {
@@ -66,10 +77,8 @@ class VisionServerEncoder(
                     handshakeMessageDecoder.reset()
                     encoding = false
                 }
-                return frame(input, command, true)
-            } else {
-                return frame(input, VISION_COMMAND_PADDING_CONTINUE, true)
             }
+            return frame(input, command, true)
         } catch (_: Exception) {
             // not a tls input
             tlsConnection = false

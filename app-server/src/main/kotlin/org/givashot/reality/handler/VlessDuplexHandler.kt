@@ -12,13 +12,10 @@ import org.givashot.reality.relay.BidiTcpRelaySession
 import org.givashot.reality.relay.UpstreamChannelConnector
 import org.givashot.reality.relay.UpstreamChannelHandler
 import org.givashot.tunnel.vless.*
-import org.givashot.tunnel.vless.const.VLESS_COMMAND_TYPE_TCP
 import org.givashot.tunnel.vless.vision.VisionFrameCodec
 import org.givashot.tunnel.vless.vision.VisionPaddingPolicy
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
-import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.TimeUnit
 
 /**
  * Handles the VLESS request on an authenticated TLS connection and relays it to the requested TCP target.
@@ -27,19 +24,19 @@ import java.util.concurrent.TimeUnit
  *
  * For the `xtls-rprx-vision` flow the client data is unpadded on the way to the target and the target data is padded
  * on the way to the client. Once either side's Vision stream ends with a direct-copy command, the outer TLS layer
- * is bypassed through [OuterEncryptionBypass], which therefore must be provided by a handler earlier in the pipeline.
+ * is bypassed through [TlsOuterEncryptionBypass], which therefore must be provided by a handler earlier in the pipeline.
  */
 class VlessDuplexHandler(
     private val connectTimeoutMillis: Int = DEFAULT_CONNECT_TIMEOUT_MILLIS,
     private val maxPendingBytesPerDirection: Long = DEFAULT_MAX_PENDING_BYTES,
     private val flowPolicy: VlessFlowPolicy = VlessFlowPolicy(),
     private val visionPaddingPolicy: VisionPaddingPolicy = VisionPaddingPolicy.DEFAULT,
+    private val tlsOuterBypass: TlsOuterEncryptionBypass
 ) : ChannelDuplexHandler() {
 
     companion object {
         const val DEFAULT_CONNECT_TIMEOUT_MILLIS = 5000
         const val DEFAULT_MAX_PENDING_BYTES = 1L shl 20
-        private const val HEADER_TIMEOUT_MILLIS = 10_000L
         private const val MAX_HEADER_BYTES = 1024
     }
 
@@ -48,11 +45,9 @@ class VlessDuplexHandler(
     private lateinit var logger: Logger
     private var phase = Phase.WaitingHeader
     private var headerBuffer: ByteBuf? = null
-    private var headerTimeout: ScheduledFuture<*>? = null
-    private var session: BidiTcpRelaySession? = null
+    private var relaySession: BidiTcpRelaySession? = null
     private var connectFuture: ChannelFuture? = null
     private var frameCodec: VisionFrameCodec? = null
-    private var bypass: OuterEncryptionBypass? = null
     private var directWriteSwitched = false
     private var directReadSwitched = false
 
@@ -67,12 +62,11 @@ class VlessDuplexHandler(
         }
         when (phase) {
             Phase.WaitingHeader -> {
-                scheduleHeaderTimeout(ctx)
                 onHeaderBytes(ctx, msg)
             }
 
             Phase.Relaying -> {
-                val relay = session
+                val relay = relaySession
                 if (relay == null) msg.release() else enqueueClientBytes(relay, msg)
             }
 
@@ -102,59 +96,43 @@ class VlessDuplexHandler(
             && frameCodec.serverEncoder.supportDirectRelay == true
         ) {
             directWriteSwitched = true
-            bypass?.stopEncrypting()
+            tlsOuterBypass.stopEncrypting()
         }
     }
 
     override fun channelWritabilityChanged(ctx: ChannelHandlerContext) {
-        session?.downstreamWritabilityChanged()
-        ctx.fireChannelWritabilityChanged()
+        relaySession?.downstreamWritabilityChanged()
+        super.channelWritabilityChanged(ctx)
     }
 
     override fun userEventTriggered(ctx: ChannelHandlerContext, evt: Any) {
+        logger.info("user event triggered called with evt: $evt")
         if (evt is IdleStateEvent) {
-            val relay = session
+            val relay = relaySession
             if (relay == null) ctx.close() else relay.failed("idle timeout")
         } else {
-            ctx.fireUserEventTriggered(evt)
+            super.userEventTriggered(ctx, evt)
         }
     }
 
     override fun channelInactive(ctx: ChannelHandlerContext) {
+        logger.info("channelInactive called")
         phase = Phase.Closed
-        cancelHeaderTimeout()
         releaseHeaderBuffer()
         connectFuture?.takeIf { it.isCancellable }?.cancel(false)
-        session?.downstreamClosed()
+        relaySession?.downstreamClosed()
         ctx.fireChannelInactive()
     }
 
     override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
-        val relay = session
+        logger.error("Exception caught called with cause.msg: ${cause.message}", cause)
+        val relay = relaySession
         if (relay == null) {
             logger.warn("VLESS connection failed before relay started", cause)
             ctx.close()
         } else {
             relay.failed("VLESS relay failed", cause)
         }
-    }
-
-    private fun scheduleHeaderTimeout(ctx: ChannelHandlerContext) {
-        if (headerTimeout != null) return
-        headerTimeout = ctx.executor().schedule(
-            {
-                if (phase == Phase.WaitingHeader) {
-                    rejectHeader(ctx, "VLESS request header was not received in time")
-                }
-            },
-            HEADER_TIMEOUT_MILLIS,
-            TimeUnit.MILLISECONDS,
-        )
-    }
-
-    private fun cancelHeaderTimeout() {
-        headerTimeout?.cancel(false)
-        headerTimeout = null
     }
 
     private fun onHeaderBytes(ctx: ChannelHandlerContext, msg: ByteBuf) {
@@ -180,33 +158,17 @@ class VlessDuplexHandler(
 
             is VlessParseResult.Complete -> {
                 logger.info("vless parse received: $result, uuid = ${String(result.header.uuid)}")
-                val rejection = unsupportedReason(ctx, result.header)
+                val rejection = flowPolicy.check(result.header)
                 if (rejection != null) {
                     rejectHeader(ctx, rejection)
                     return
                 }
-                cancelHeaderTimeout()
                 releaseHeaderBuffer()
                 val initialPayload = Unpooled.wrappedBuffer(bytes, result.consumed, bytes.size - result.consumed)
                 startRelay(ctx, result.header, initialPayload)
             }
         }
     }
-
-    private fun unsupportedReason(ctx: ChannelHandlerContext, header: VlessRequestHeader): String? = when {
-        header.command != VLESS_COMMAND_TYPE_TCP -> "unsupported VLESS command ${header.command}"
-        header.port == 0 -> "VLESS target port must not be 0"
-        header.host.isEmpty() -> "VLESS target host must not be empty"
-        else -> flowPolicy.check(header)
-            ?: if (header.decodedAddons.isVision && findBypass(ctx) == null) {
-                "VLESS flow '${header.flow}' needs an outer TLS handler that can be bypassed"
-            } else {
-                null
-            }
-    }
-
-    private fun findBypass(ctx: ChannelHandlerContext): OuterEncryptionBypass? =
-        ctx.pipeline().firstNotNullOfOrNull { it.value as? OuterEncryptionBypass }
 
     /**
      * Forwards client data to the target. For Vision the frames are unpadded first, and a direct-copy command makes
@@ -224,7 +186,7 @@ class VlessDuplexHandler(
         relay.enqueueDownstreamBytes(Unpooled.wrappedBuffer(content))
         if (!directReadSwitched && frameCodec.decoder.directRelay) {
             directReadSwitched = true
-            bypass?.stopDecrypting()
+            tlsOuterBypass.stopDecrypting()
         }
     }
 
@@ -232,11 +194,10 @@ class VlessDuplexHandler(
         phase = Phase.Relaying
         val channel = ctx.channel()
         val relay = BidiTcpRelaySession(channel, maxPendingBytesPerDirection)
-        session = relay
+        relaySession = relay
 
         if (header.decodedAddons.isVision) {
             frameCodec = VisionFrameCodec(header.uuid, visionPaddingPolicy)
-            bypass = findBypass(ctx)
         }
 
         // Do not read client data until the target is connected and able to accept writes.
@@ -281,7 +242,6 @@ class VlessDuplexHandler(
     private fun rejectHeader(ctx: ChannelHandlerContext, reason: String) {
         logger.warn("Closing VLESS connection: $reason")
         phase = Phase.Closed
-        cancelHeaderTimeout()
         releaseHeaderBuffer()
         ctx.close()
     }
