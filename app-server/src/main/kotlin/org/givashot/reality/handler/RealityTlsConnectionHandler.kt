@@ -257,7 +257,8 @@ class RealityTlsConnectionHandler(
             TlsCommand.SendServerFlight(
                 EncryptedExtensionsData(),
                 certificate,
-                handshakeRecordProfile.recordLengths
+                handshakeRecordProfile.recordLengths,
+                handshakeRecordProfile.serverHelloExtensionOrder,
             )
         )
         writeOutbound(ctx, *reply.toTypedArray())

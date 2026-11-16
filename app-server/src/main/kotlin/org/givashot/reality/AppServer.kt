@@ -42,7 +42,9 @@ fun main() {
             .channel(NioServerSocketChannel::class.java)
             .childHandler(object : ChannelInitializer<SocketChannel>() {
                 override fun initChannel(ch: SocketChannel) {
-                    ch.pipeline().channel().attr(CONNECTION_NUM_KEY).set(connectionNum.incrementAndGet())
+                    val connNum = connectionNum.incrementAndGet()
+                    logger.info("initChannel called with socket channel = $ch, connectionNum = $connNum")
+                    ch.pipeline().channel().attr(CONNECTION_NUM_KEY).set(connNum)
                     ch.pipeline().addLast(ReadTimeoutHandler::class.java.simpleName, ReadTimeoutHandler(10))
                     ch.pipeline().addLast(LoggerHandler::class.java.simpleName, LoggerHandler())
                     val tlsConnectionHandler = RealityTlsConnectionHandler(

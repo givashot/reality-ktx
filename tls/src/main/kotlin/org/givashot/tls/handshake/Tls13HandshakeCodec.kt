@@ -84,9 +84,42 @@ internal class Tls13HandshakeCodec {
         return KeyUpdate(requestUpdate)
     }
 
-    fun encodeServerHello(serverHello: ServerHello): ByteArray {
+    fun encodeServerHello(serverHello: ServerHello, extensionOrder: List<Int>): ByteArray {
+        val extensionData = mutableMapOf<Int, ByteArray>()
+        val extensionTypes = serverHello.extensions.keys()
+        while (extensionTypes.hasMoreElements()) {
+            val type = extensionTypes.nextElement()
+            require(type is Int && type in 0..0xFFFF) { "ServerHello extension type is invalid" }
+            val data = serverHello.extensions[type]
+            require(data is ByteArray) { "ServerHello extension data must be a byte array" }
+            extensionData[type] = data
+        }
+        val typesInOrder = extensionOrder.distinct().filter { it in extensionData } +
+            (extensionData.keys - extensionOrder.toSet()).sorted()
+        val extensions = ByteArrayOutputStream()
+        typesInOrder.forEach { type ->
+            val data = checkNotNull(extensionData[type])
+            require(data.size <= 0xFFFF)
+            extensions.writeUint16(type)
+            extensions.writeUint16(data.size)
+            extensions.write(data)
+        }
+        require(extensions.size() <= 0xFFFF) { "ServerHello extensions are too large" }
+
         val body = ByteArrayOutputStream()
-        serverHello.encode(null, body)
+        val version = serverHello.version
+        val sessionId = serverHello.sessionID
+        require(sessionId.size <= 32) { "ServerHello session ID is too large" }
+        require(serverHello.random.size == 32) { "ServerHello random must be 32 bytes" }
+        body.write(version.majorVersion)
+        body.write(version.minorVersion)
+        body.write(serverHello.random)
+        body.write(sessionId.size)
+        body.write(sessionId)
+        body.writeUint16(serverHello.cipherSuite)
+        body.write(0)
+        body.writeUint16(extensions.size())
+        body.write(extensions.toByteArray())
         return tlsHandshakeMessage(TLS_HANDSHAKE_CONTENT_TYPE_SERVER_HELLO, body.toByteArray())
     }
 

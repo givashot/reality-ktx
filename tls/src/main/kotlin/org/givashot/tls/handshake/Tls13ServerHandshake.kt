@@ -54,6 +54,7 @@ internal class Tls13ServerHandshake(
     fun buildServerFlight(
         encryptedExtensions: EncryptedExtensionsData,
         certificate: CertificateData,
+        serverHelloExtensionOrder: List<Int>,
     ): ServerFlight {
         val hello = checkNotNull(state.clientHello) { "ClientHello has not been received" }
         val negotiated = checkNotNull(state.negotiated) { "Parameters have not been negotiated" }
@@ -61,7 +62,7 @@ internal class Tls13ServerHandshake(
         val transcript = state.transcript
 
         val serverHello = newServerHello(hello, negotiated)
-        val serverHelloBytes = codec.encodeServerHello(serverHello.base)
+        val serverHelloBytes = codec.encodeServerHello(serverHello.base, serverHelloExtensionOrder)
         transcript.update(serverHelloBytes)
 
         val keySchedule = Tls13KeySchedule(suite)

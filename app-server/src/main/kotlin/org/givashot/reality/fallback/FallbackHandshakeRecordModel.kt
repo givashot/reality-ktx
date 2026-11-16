@@ -1,16 +1,14 @@
 package org.givashot.reality.fallback
 
 import io.netty.bootstrap.Bootstrap
-import io.netty.buffer.ByteBuf
-import io.netty.channel.*
+import io.netty.channel.ChannelInitializer
+import io.netty.channel.EventLoopGroup
 import io.netty.channel.socket.SocketChannel
 import io.netty.channel.socket.nio.NioSocketChannel
 import io.netty.handler.ssl.SslContextBuilder
+import io.netty.handler.ssl.SslHandler
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory
 import org.givashot.reality.config.RealityConfig
-import org.givashot.tls.constant.TLS_CONTENT_TYPE_APPLICATION_DATA
-import org.givashot.tls.constant.TLS_CONTENT_TYPE_HANDSHAKE
-import org.givashot.tls.constant.TLS_RECORD_HEADER_LENGTH
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
@@ -19,6 +17,8 @@ import javax.net.ssl.SNIHostName
 data class HandshakeRecordProfile(
     /** 按顺序排列：EncryptedExtensions, Certificate, CertificateVerify, Finished(, NewSessionTicket...) 每条 record 的密文长度 */
     val recordLengths: List<Int>,
+    /** Fallback 服务端 ServerHello 中扩展的顺序 */
+    val serverHelloExtensionOrder: List<Int>,
 )
 
 /**
@@ -51,25 +51,17 @@ class FallbackHandshakeRecordModel(
                 override fun initChannel(ch: SocketChannel) {
                     val recorder = RecordSniffingHandler()
                     val sslHandler = sslContext.newHandler(ch.alloc(), host, port)
-
-                    if (isDnsName(host)) {
-                        val engine = sslHandler.engine()
-                        val params = engine.sslParameters
-                        params.serverNames = listOf(SNIHostName(host))
-                        engine.sslParameters = params
-                    }
+                    configureSni(sslHandler, host)
 
                     sslHandler.handshakeFuture().addListener { future ->
                         if (future.isSuccess) {
-                            resultFuture.complete(HandshakeRecordProfile(recorder.applicationDataRecordLengths.toList()))
+                            completeProfile(recorder, resultFuture)
                         } else {
                             resultFuture.completeExceptionally(future.cause())
                         }
                         ch.close()
                     }
 
-                    // recorder 必须放在 sslHandler 之前（更靠近 socket），
-                    // 这样它拿到的是加/解密之前的原始 record 字节。
                     ch.pipeline()
                         .addLast(recorder)
                         .addLast(sslHandler)
@@ -93,92 +85,23 @@ class FallbackHandshakeRecordModel(
         }
     }
 
-    private fun isDnsName(host: String): Boolean =
-        host.isNotBlank() && host.any { it.isLetter() }
-
-    /** 只读、不消费、不修改数据，原样透传给下一个 handler */
-    private class RecordSniffingHandler : ChannelDuplexHandler() {
-
-        val applicationDataRecordLengths = mutableListOf<Int>()
-
-        @Volatile
-        private var capturingDone = false
-
-        // 跨多次 channelRead 拼接不完整的 5 字节 record header
-        private var headerCarry = ByteArray(0)
-
-        // 当前 record body 还剩多少字节没跳过（跨包时用）
-        private var remainingBodyBytes = 0
-
-        override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
-            if (msg is ByteBuf && !capturingDone) {
-                parseInboundRecords(msg)
-            }
-            ctx.fireChannelRead(msg)
-        }
-
-        override fun write(ctx: ChannelHandlerContext, msg: Any, promise: ChannelPromise) {
-            if (!capturingDone && msg is ByteBuf && containsNonHandshakeRecord(msg)) {
-                capturingDone = true
-            }
-            ctx.write(msg, promise)
-        }
-
-        private fun containsNonHandshakeRecord(buf: ByteBuf): Boolean {
-            var idx = buf.readerIndex()
-            val writerIndex = buf.writerIndex()
-            while (idx + TLS_RECORD_HEADER_LENGTH <= writerIndex) {
-                val type = buf.getUnsignedByte(idx).toInt()
-                if (type != TLS_CONTENT_TYPE_HANDSHAKE) return true
-                val length = buf.getUnsignedShort(idx + 3)
-                idx += TLS_RECORD_HEADER_LENGTH + length
-            }
-            return false
-        }
-
-        private fun parseInboundRecords(buf: ByteBuf) {
-            var idx = buf.readerIndex()
-            val writerIndex = buf.writerIndex()
-
-            if (remainingBodyBytes > 0) {
-                val skip = minOf(remainingBodyBytes, writerIndex - idx)
-                remainingBodyBytes -= skip
-                idx += skip
-            }
-
-            while (remainingBodyBytes == 0) {
-                val availableForHeader = writerIndex - idx
-                val totalHeaderBytes = headerCarry.size + availableForHeader
-                if (totalHeaderBytes < TLS_RECORD_HEADER_LENGTH) {
-                    val newCarry = ByteArray(totalHeaderBytes)
-                    headerCarry.copyInto(newCarry)
-                    buf.getBytes(idx, newCarry, headerCarry.size, availableForHeader)
-                    headerCarry = newCarry
-                    return
-                }
-
-                val header = ByteArray(TLS_RECORD_HEADER_LENGTH)
-                headerCarry.copyInto(header)
-                val bytesNeeded = TLS_RECORD_HEADER_LENGTH - headerCarry.size
-                buf.getBytes(idx, header, headerCarry.size, bytesNeeded)
-                idx += bytesNeeded
-                headerCarry = ByteArray(0)
-
-                val type = header[0].toInt() and 0xFF
-                val length = ((header[3].toInt() and 0xFF) shl 8) or (header[4].toInt() and 0xFF)
-                if (type == TLS_CONTENT_TYPE_APPLICATION_DATA) {
-                    applicationDataRecordLengths.add(length)
-                }
-
-                val bodyAvailable = writerIndex - idx
-                if (length <= bodyAvailable) {
-                    idx += length
-                } else {
-                    remainingBodyBytes = length - bodyAvailable
-                    idx = writerIndex
-                }
-            }
+    private fun completeProfile(recorder: RecordSniffingHandler, resultFuture: CompletableFuture<HandshakeRecordProfile>) {
+        val extensionOrder = recorder.serverHelloExtensionOrder
+        if (extensionOrder == null) {
+            resultFuture.completeExceptionally(IllegalStateException("Fallback ServerHello extensions were not captured"))
+        } else {
+            resultFuture.complete(HandshakeRecordProfile(recorder.applicationDataRecordLengths, extensionOrder))
         }
     }
 
+    private fun configureSni(sslHandler: SslHandler, host: String) {
+        if (!isDnsName(host)) return
+        val engine = sslHandler.engine()
+        val params = engine.sslParameters
+        params.serverNames = listOf(SNIHostName(host))
+        engine.sslParameters = params
+    }
+
+    private fun isDnsName(host: String): Boolean =
+        host.isNotBlank() && host.any { it.isLetter() }
 }

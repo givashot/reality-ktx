@@ -1,9 +1,11 @@
 package org.givashot.tunnel.vless.vision
 
+import org.givashot.tls.connection.DecodeErrorException
 import org.givashot.tls.constant.*
 import org.givashot.tls.crypto.globalSecureRandom
 import org.givashot.tls.handshake.HandshakeMessage
 import org.givashot.tls.handshake.HandshakeMessageDecoder
+import org.givashot.tls.handshake.parseServerHello
 import org.givashot.tls.record.TlsRecordDecoder
 import org.givashot.tunnel.vless.const.*
 
@@ -97,40 +99,15 @@ class VisionServerEncoder(
     }
 
     private fun HandshakeMessage.supportDirectRelay(): Boolean {
-        require(this.type == TLS_HANDSHAKE_CONTENT_TYPE_SERVER_HELLO) { "handshake message must be server hello" }
-        if (TLS_HANDSHAKE_SESSION_ID_LENGTH_OFFSET_BASE_BODY + 1 > body.size) {
+        val serverHello = try {
+            parseServerHello()
+        } catch (_: DecodeErrorException) {
             return false
         }
-        val cipherSuiteOffset = TLS_HANDSHAKE_SESSION_ID_LENGTH_OFFSET_BASE_BODY +
-                body[TLS_HANDSHAKE_SESSION_ID_LENGTH_OFFSET_BASE_BODY].unsigned() +
-                1
-        if (cipherSuiteOffset + 2 > body.size) {
-            return false
-        }
-        val cipherSuite = (body[cipherSuiteOffset].unsigned() shl 8) or body[cipherSuiteOffset + 1].unsigned()
-        if (cipherSuite in TLS13_CIPHER_SUITES && cipherSuite != TLS_AES_128_CCM_8_SHA256) {
-            fun ByteArray.contains(another: ByteArray): Boolean {
-                for (i in indices) {
-                    if (this[i] == another[0] && this@contains.size >= i + another.size) {
-                        for (j in 1 until another.size) {
-                            if (this[i + j] == another[j]) {
-                                if (j == another.size - 1) {
-                                    return true
-                                }
-                            } else {
-                                break
-                            }
-                        }
-                    }
-                }
-                return false
-            }
-            return body.contains(TLS13_SUPPORTED_VERSIONS)
-        }
-        return false
+        return serverHello.cipherSuite != TLS_AES_128_CCM_8_SHA256
+                && serverHello.cipherSuite in TLS13_CIPHER_SUITES
+                && serverHello.isTls13
     }
-
-    private fun Byte.unsigned(): Int = toInt() and 0xFF
 
     private fun frame(content: ByteArray, command: Int, longPadding: Boolean): ByteArray {
         val paddingLength = policy.paddingLength(content.size, longPadding, globalSecureRandom)

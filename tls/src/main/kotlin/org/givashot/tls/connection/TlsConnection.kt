@@ -134,7 +134,11 @@ class TlsConnection internal constructor(
         }
         val recordLengths = command.recordLengths
 
-        val flight = handshake.buildServerFlight(command.encryptedExtensions, command.certificate)
+        val flight = handshake.buildServerFlight(
+            command.encryptedExtensions,
+            command.certificate,
+            command.serverHelloExtensionOrder,
+        )
         val serverHelloRecord = recordLayer.encode(TLS_CONTENT_TYPE_HANDSHAKE, flight.serverHello)
         val replyTlsRecords = arrayListOf(serverHelloRecord)
         if (handshake.hasLegacySessionId) {

@@ -9,6 +9,7 @@ sealed interface TlsCommand {
         val encryptedExtensions: EncryptedExtensionsData,
         val certificate: CertificateData,
         val recordLengths: List<Int>,
+        val serverHelloExtensionOrder: List<Int>,
     ) : TlsCommand
 
     data class SendApplicationData(
