@@ -45,8 +45,10 @@ class VlessDuplexHandler(
     private lateinit var logger: Logger
     private var phase = Phase.WaitingHeader
     private var headerBuffer: ByteBuf? = null
+    private var vlessRequestHeader: VlessRequestHeader? = null
     private var relaySession: BidiTcpRelaySession? = null
     private var connectFuture: ChannelFuture? = null
+    private var sendVlessResponseHeader = false
     private var frameCodec: VisionFrameCodec? = null
     private var directWriteSwitched = false
     private var directReadSwitched = false
@@ -88,7 +90,11 @@ class VlessDuplexHandler(
         val bytes = ByteBufUtil.getBytes(msg)
         msg.release()
 
-        val visionFrame = frameCodec.serverEncode(bytes)
+        var visionFrame = frameCodec.serverEncode(bytes)
+        if (!sendVlessResponseHeader && vlessRequestHeader != null) {
+            sendVlessResponseHeader = true
+            visionFrame = VlessResponseHeader.encode(vlessRequestHeader!!.version) + visionFrame
+        }
         super.write(ctx, Unpooled.wrappedBuffer(visionFrame), promise)
         // The frames above were encrypted synchronously, so what follows may leave the outer TLS layer.
         if (!directWriteSwitched
@@ -163,6 +169,7 @@ class VlessDuplexHandler(
                     rejectHeader(ctx, rejection)
                     return
                 }
+                vlessRequestHeader = result.header
                 releaseHeaderBuffer()
                 val initialPayload = Unpooled.wrappedBuffer(bytes, result.consumed, bytes.size - result.consumed)
                 startRelay(ctx, result.header, initialPayload)
@@ -217,26 +224,10 @@ class VlessDuplexHandler(
             header.port,
             connectTimeoutMillis,
         ).addListener { future ->
-            if (future.isSuccess) {
-                sendResponseHeader(ctx, header, relay)
-            } else {
+            if (!future.isSuccess) {
                 relay.failed("could not connect to VLESS target $target", future.cause())
             }
         }
-    }
-
-    /**
-     * Sent once the target is connected and before any target data is relayed. Target reads only start
-     * after the upstream channel becomes active, so the response header always precedes relayed data.
-     */
-    private fun sendResponseHeader(ctx: ChannelHandlerContext, header: VlessRequestHeader, relay: BidiTcpRelaySession) {
-        if (relay.closed) return
-        ctx.writeAndFlush(Unpooled.wrappedBuffer(VlessResponseHeader.encode(header.version)))
-            .addListener { future ->
-                if (!future.isSuccess) {
-                    relay.failed("could not send VLESS response header", future.cause())
-                }
-            }
     }
 
     private fun rejectHeader(ctx: ChannelHandlerContext, reason: String) {
