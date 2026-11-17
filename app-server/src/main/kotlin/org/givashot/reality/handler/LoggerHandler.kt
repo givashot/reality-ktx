@@ -18,26 +18,40 @@ class LoggerHandler : ChannelDuplexHandler() {
     }
 
     override fun channelRead(ctx: ChannelHandlerContext?, msg: Any?) {
-        if (logger.isInfoEnabled) {
-            logMessage("read", msg)
-        }
+        logMessage("read", msg)
         super.channelRead(ctx, msg)
     }
 
     override fun write(ctx: ChannelHandlerContext?, msg: Any?, promise: ChannelPromise?) {
-        if (logger.isInfoEnabled) {
-            logMessage("write", msg)
-        }
+        logMessage("write", msg)
         super.write(ctx, msg, promise)
     }
 
     private fun logMessage(direction: String, msg: Any?) {
         if (msg is ByteBuf) {
             val length = msg.readableBytes()
-            val dumpBytes = ByteBufUtil.hexDump(msg, msg.readerIndex(), minOf(length, Int.MAX_VALUE))
-            logger.info("{} -> length={}, dumpBytes={}", direction, length, dumpBytes)
+            logger.atDebug().log {
+                "{$direction} -> length={$length}, dumpBytes={${
+                    ByteBufUtil.hexDump(
+                        msg,
+                        msg.readerIndex(),
+                        minOf(length, Int.MAX_VALUE)
+                    )
+                }}"
+            }
+            logger.atInfo().log {
+                "{$direction} -> length={$length}, dumpBytes={${
+                    ByteBufUtil.hexDump(
+                        msg,
+                        msg.readerIndex(),
+                        minOf(length, 9)
+                    )
+                }}"
+            }
         } else {
-            logger.info("{} -> {}", direction, msg)
+            logger.atInfo().log {
+                "{$direction} -> {$msg}"
+            }
         }
     }
 

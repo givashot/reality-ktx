@@ -8,7 +8,7 @@ import io.netty.channel.socket.SocketChannel
 import io.netty.handler.timeout.IdleStateEvent
 import io.netty.util.ReferenceCountUtil
 import org.givashot.reality.CONNECTION_NUM_KEY
-import org.givashot.reality.relay.BidiTcpRelaySession
+import org.givashot.reality.relay.TcpRelaySession
 import org.givashot.reality.relay.UpstreamChannelConnector
 import org.givashot.reality.relay.UpstreamChannelHandler
 import org.givashot.tunnel.vless.*
@@ -46,7 +46,7 @@ class VlessDuplexHandler(
     private var phase = Phase.WaitingHeader
     private var headerBuffer: ByteBuf? = null
     private var vlessRequestHeader: VlessRequestHeader? = null
-    private var relaySession: BidiTcpRelaySession? = null
+    private var relaySession: TcpRelaySession? = null
     private var connectFuture: ChannelFuture? = null
     private var sendVlessResponseHeader = false
     private var frameCodec: VisionFrameCodec? = null
@@ -181,7 +181,7 @@ class VlessDuplexHandler(
      * Forwards client data to the target. For Vision the frames are unpadded first, and a direct-copy command makes
      * the outer TLS layer pass up the rest of the client's stream as it is.
      */
-    private fun enqueueClientBytes(relay: BidiTcpRelaySession, bytes: ByteBuf) {
+    private fun enqueueClientBytes(relay: TcpRelaySession, bytes: ByteBuf) {
         val frameCodec = frameCodec
         if (frameCodec == null || !frameCodec.decoder.decoding) {
             relay.enqueueDownstreamBytes(bytes)
@@ -200,7 +200,7 @@ class VlessDuplexHandler(
     private fun startRelay(ctx: ChannelHandlerContext, header: VlessRequestHeader, initialPayload: ByteBuf) {
         phase = Phase.Relaying
         val channel = ctx.channel()
-        val relay = BidiTcpRelaySession(channel, maxPendingBytesPerDirection)
+        val relay = TcpRelaySession(channel, maxPendingBytesPerDirection)
         relaySession = relay
 
         if (header.decodedAddons.isVision) {

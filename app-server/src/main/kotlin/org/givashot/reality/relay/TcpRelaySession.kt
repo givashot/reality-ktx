@@ -6,7 +6,7 @@ import io.netty.channel.ConnectTimeoutException
 import org.slf4j.LoggerFactory
 import java.util.*
 
-class BidiTcpRelaySession(
+class TcpRelaySession(
     private val downstream: Channel,
     private val maxPendingBytesPerDirection: Long,
 ) {
@@ -218,6 +218,6 @@ class BidiTcpRelaySession(
     }
 
     companion object {
-        private val logger = LoggerFactory.getLogger(BidiTcpRelaySession::class.java)
+        private val logger = LoggerFactory.getLogger(TcpRelaySession::class.java)
     }
 }

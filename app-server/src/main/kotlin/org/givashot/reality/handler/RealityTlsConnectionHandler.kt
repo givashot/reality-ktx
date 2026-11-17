@@ -4,7 +4,7 @@ import io.netty.buffer.ByteBuf
 import io.netty.buffer.ByteBufUtil
 import io.netty.buffer.Unpooled
 import io.netty.channel.*
-import io.netty.handler.timeout.ReadTimeoutHandler
+import io.netty.handler.timeout.IdleStateHandler
 import io.netty.util.AttributeKey
 import org.givashot.reality.CONNECTION_NUM_KEY
 import org.givashot.reality.authentication.AuthResult
@@ -29,8 +29,6 @@ class RealityTlsConnectionHandler(
 ) : ChannelDuplexHandler(), TlsOuterEncryptionBypass {
 
     companion object {
-        private const val IDLE_TIMEOUT_SECONDS = 300
-
         private val CLOSE_CAUSE_KEY = AttributeKey.valueOf<Throwable>("CLOSE_CAUSE_KEY")
     }
 
@@ -113,11 +111,26 @@ class RealityTlsConnectionHandler(
     override fun write(ctx: ChannelHandlerContext, output: Any, promise: ChannelPromise) {
         if (!outboundPassthrough && output is ByteBuf && tlsConnection.state == TlsState.Established) {
             try {
-                val dump = ByteBufUtil.hexDump(
-                    output, output.readerIndex(),
-                    output.readableBytes().coerceAtMost(Int.MAX_VALUE)
-                )
-                logger.info("write outbound application bytes, size = ${output.readableBytes()}, dump_content = $dump")
+                if (logger.isDebugEnabled) {
+                    logger.debug(
+                        "write outbound application bytes, size = ${output.readableBytes()}, dump_content = ${
+                            ByteBufUtil.hexDump(
+                                output, output.readerIndex(),
+                                output.readableBytes().coerceAtMost(Int.MAX_VALUE)
+                            )
+                        }"
+                    )
+                } else {
+                    logger.atInfo().log {
+                        "write outbound application bytes, size = ${output.readableBytes()}, dump_content = ${
+                            ByteBufUtil.hexDump(
+                                output, output.readerIndex(),
+                                output.readableBytes().coerceAtMost(Int.MAX_VALUE)
+                            )
+                        }"
+                    }
+                }
+
                 val bytes = ByteArray(output.readableBytes())
                 output.getBytes(output.readerIndex(), bytes)
                 val records = tlsConnection.execute(TlsCommand.SendApplicationData(bytes))
@@ -220,8 +233,27 @@ class RealityTlsConnectionHandler(
             TlsClientEvent.ClientFinished -> Unit
 
             is TlsClientEvent.ClientApplicationData -> {
-                val dump = ByteBufUtil.hexDump(event.data, 0, event.data.size.coerceAtMost(Int.MAX_VALUE))
-                logger.info("received inbound application bytes, size = ${event.data.size}, dump_content =  $dump")
+                if (logger.isDebugEnabled) {
+                    logger.debug(
+                        "received inbound application bytes, size = ${event.data.size}, dump_content =  ${
+                            ByteBufUtil.hexDump(
+                                event.data,
+                                0,
+                                event.data.size.coerceAtMost(Int.MAX_VALUE)
+                            )
+                        }"
+                    )
+                } else {
+                    logger.atInfo().log {
+                        "received inbound application bytes, size = ${event.data.size}, dump_content =  ${
+                            ByteBufUtil.hexDump(
+                                event.data,
+                                0,
+                                event.data.size.coerceAtMost(50)
+                            )
+                        }"
+                    }
+                }
                 ctx.fireChannelRead(Unpooled.wrappedBuffer(event.data))
             }
 
@@ -268,11 +300,11 @@ class RealityTlsConnectionHandler(
         if (switchedToFallback || authenticated) return
         switchedToFallback = true
         tlsConnection.close(cause)
-        logger.info("Switching unauthenticated connection to fallback: $reason", cause)
+        logger.warn("Switching unauthenticated connection to fallback: $reason", cause)
         val fallbackHandler = fallbackHandlerFactory.newForwardHandler(initByteBuf)
         val currentHandlerName = ctx.name()
         ctx.pipeline().apply {
-            remove(ReadTimeoutHandler::class.java.simpleName)
+            remove(IdleStateHandler::class.java.simpleName)
             var foundCurrent = false
             val bizHandlerNames = names().filterNot { it.contains("TailContext") }
             for (name in bizHandlerNames) {

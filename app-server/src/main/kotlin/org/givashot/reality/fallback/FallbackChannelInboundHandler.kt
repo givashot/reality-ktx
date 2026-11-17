@@ -7,7 +7,7 @@ import io.netty.channel.ChannelInboundHandlerAdapter
 import io.netty.channel.ChannelInitializer
 import io.netty.channel.socket.SocketChannel
 import io.netty.util.ReferenceCountUtil
-import org.givashot.reality.relay.BidiTcpRelaySession
+import org.givashot.reality.relay.TcpRelaySession
 import org.givashot.reality.relay.UpstreamChannelConnector
 import org.givashot.reality.relay.UpstreamChannelHandler
 import org.slf4j.LoggerFactory
@@ -20,25 +20,25 @@ class FallbackChannelInboundHandler(
     private val initialBytes: ByteBuf?,
 ) : ChannelInboundHandlerAdapter() {
 
-    var bidiTcpRelaySession: BidiTcpRelaySession? = null
+    var tcpRelaySession: TcpRelaySession? = null
     var connectFuture: ChannelFuture? = null
 
     override fun handlerAdded(ctx: ChannelHandlerContext) {
-        val bidiTcpRelaySession =
-            BidiTcpRelaySession(ctx.channel(), maxPendingBytesPerDirection)
-        this.bidiTcpRelaySession = bidiTcpRelaySession
+        val tcpRelaySession =
+            TcpRelaySession(ctx.channel(), maxPendingBytesPerDirection)
+        this.tcpRelaySession = tcpRelaySession
 
         // Do not read downstream data until the upstream is connected and able to accept writes.
         ctx.channel().config().isAutoRead = false
         if (initialBytes != null) {
-            bidiTcpRelaySession.enqueueDownstreamBytes(initialBytes)
+            tcpRelaySession.enqueueDownstreamBytes(initialBytes)
         }
         connectFuture = UpstreamChannelConnector.connect(
             ctx.channel().eventLoop(),
             object : ChannelInitializer<SocketChannel>() {
                 override fun initChannel(peerChannel: SocketChannel) {
                     peerChannel.config().isAutoRead = false
-                    peerChannel.pipeline().addLast(UpstreamChannelHandler(bidiTcpRelaySession))
+                    peerChannel.pipeline().addLast(UpstreamChannelHandler(tcpRelaySession))
                 }
             },
             upstreamHost,
@@ -46,7 +46,7 @@ class FallbackChannelInboundHandler(
             connectTimeoutMillis
         ).addListener { future ->
             if (!future.isSuccess) {
-                bidiTcpRelaySession.failed(
+                tcpRelaySession.failed(
                     "could not connect to fallback ${upstreamHost}:${upstreamPort}",
                     future.cause(),
                 )
@@ -55,26 +55,26 @@ class FallbackChannelInboundHandler(
     }
 
     override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
-        if (msg is ByteBuf && bidiTcpRelaySession != null) {
-            bidiTcpRelaySession!!.enqueueDownstreamBytes(msg)
+        if (msg is ByteBuf && tcpRelaySession != null) {
+            tcpRelaySession!!.enqueueDownstreamBytes(msg)
         } else {
             ReferenceCountUtil.release(msg)
         }
     }
 
     override fun channelWritabilityChanged(ctx: ChannelHandlerContext) {
-        bidiTcpRelaySession?.downstreamWritabilityChanged()
+        tcpRelaySession?.downstreamWritabilityChanged()
         ctx.fireChannelWritabilityChanged()
     }
 
     override fun channelInactive(ctx: ChannelHandlerContext) {
         connectFuture?.takeIf { it.isCancellable }?.cancel(false)
-        bidiTcpRelaySession?.downstreamClosed()
+        tcpRelaySession?.downstreamClosed()
         ctx.fireChannelInactive()
     }
 
     override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
-        bidiTcpRelaySession?.failed("fallback client channel failed", cause)
+        tcpRelaySession?.failed("fallback client channel failed", cause)
             ?: logger.warn("Fallback client channel failed", cause)
         ctx.close()
     }
