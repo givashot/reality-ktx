@@ -7,7 +7,7 @@ import io.netty.channel.MultiThreadIoEventLoopGroup
 import io.netty.channel.nio.NioIoHandler
 import io.netty.channel.socket.SocketChannel
 import io.netty.channel.socket.nio.NioServerSocketChannel
-import io.netty.handler.timeout.ReadTimeoutHandler
+import io.netty.handler.timeout.IdleStateHandler
 import io.netty.util.AttributeKey
 import org.givashot.reality.authentication.Authenticator
 import org.givashot.reality.config.configureLogging
@@ -18,9 +18,9 @@ import org.givashot.reality.handler.LoggerHandler
 import org.givashot.reality.handler.RealityTlsConnectionHandler
 import org.givashot.reality.handler.VlessDuplexHandler
 import org.slf4j.LoggerFactory
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
-val CONNECTION_NUM_KEY: AttributeKey<Int> = AttributeKey.valueOf("CONNECTION_NUM_KEY")
+val CONNECTION_NUM_KEY: AttributeKey<Long> = AttributeKey.valueOf("CONNECTION_NUM_KEY")
 
 fun main() {
     val config = loadAppConfig()
@@ -36,7 +36,7 @@ fun main() {
         val fallbackHandlerFactory = FallbackHandlerFactory(
             fallbackDest = config.server.reality.fallbackDest
         )
-        val connectionNum = AtomicInteger()
+        val connectionNum = AtomicLong()
         val server: Channel = ServerBootstrap()
             .group(boss, workers)
             .channel(NioServerSocketChannel::class.java)
@@ -45,7 +45,10 @@ fun main() {
                     val connNum = connectionNum.incrementAndGet()
                     logger.info("initChannel called with socket channel = $ch, connectionNum = $connNum")
                     ch.pipeline().channel().attr(CONNECTION_NUM_KEY).set(connNum)
-                    ch.pipeline().addLast(ReadTimeoutHandler::class.java.simpleName, ReadTimeoutHandler(10))
+                    ch.pipeline().addLast(
+                        IdleStateHandler::class.java.simpleName,
+                        IdleStateHandler(60 * 5, 20, 0)
+                    )
                     ch.pipeline().addLast(LoggerHandler::class.java.simpleName, LoggerHandler())
                     val tlsConnectionHandler = RealityTlsConnectionHandler(
                         authenticator = authenticator,

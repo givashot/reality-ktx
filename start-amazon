@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# run gradlew:app-server:distZip first, and upload app-server.zip to server
+set -Eeuo pipefail
+
+readonly APP_USER="ec2-user"
+readonly APP_HOME="/home/${APP_USER}/reality"
+readonly APP_ARCHIVE="${APP_HOME}/app-server.zip"
+readonly APP_EXECUTABLE="${APP_HOME}/app-server/bin/app-server"
+readonly SERVICE_FILE="/etc/systemd/system/reality.service"
+
+fail() {
+    printf 'Error: %s\n' "$*" >&2
+    exit 1
+}
+
+run_privileged() {
+    if [[ "${EUID}" -eq 0 ]]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
+[[ -r /etc/os-release ]] || fail "Cannot identify the operating system."
+# shellcheck disable=SC1091
+. /etc/os-release
+[[ "${ID:-}" == "amzn" && "${VERSION_ID:-}" == 2023* ]] \
+    || fail "This script requires Amazon Linux 2023."
+
+id "${APP_USER}" >/dev/null 2>&1 || fail "Required user '${APP_USER}' does not exist."
+if [[ "${EUID}" -ne 0 ]]; then
+    command -v sudo >/dev/null 2>&1 || fail "sudo is required to install packages and configure the service."
+fi
+
+run_privileged install -d -o "${APP_USER}" -g "${APP_USER}" -m 0755 "${APP_HOME}"
+[[ -f "${APP_ARCHIVE}" ]] || fail "Upload app-server.zip to ${APP_ARCHIVE} before running this script."
+command -v curl >/dev/null 2>&1 || fail "curl is required to configure the Amazon Corretto repository."
+
+run_privileged rpm --import https://yum.corretto.aws/corretto.key
+run_privileged curl --fail --location --silent --show-error \
+    --output /etc/yum.repos.d/corretto.repo \
+    https://yum.corretto.aws/corretto.repo
+run_privileged dnf install -y java-25-amazon-corretto unzip
+
+run_privileged unzip -o "${APP_ARCHIVE}" -d "${APP_HOME}"
+[[ -f "${APP_EXECUTABLE}" ]] || fail "The archive does not contain app-server/bin/app-server."
+run_privileged chown -R "${APP_USER}:${APP_USER}" "${APP_HOME}"
+run_privileged chmod 0755 "${APP_EXECUTABLE}"
+
+run_privileged tee "${SERVICE_FILE}" >/dev/null <<'UNIT'
+[Unit]
+Description=Reality Java Application
+After=network.target
+
+[Service]
+User=ec2-user
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+Environment="JAVA_OPTS=-Xms128m -Xmx512m -XX:MaxMetaspaceSize=160m -XX:+UseSerialGC"
+WorkingDirectory=/home/ec2-user/reality
+ExecStart=/home/ec2-user/reality/app-server/bin/app-server
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+run_privileged systemctl daemon-reload
+run_privileged systemctl enable reality.service
+run_privileged systemctl restart reality.service
+run_privileged systemctl is-active --quiet reality.service \
+    || fail "reality.service did not start successfully; check it with: sudo journalctl -u reality.service"
+
+printf 'reality.service is running.\n'
