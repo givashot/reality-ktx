@@ -1,4 +1,4 @@
 # 应用配置
 app:
   profiles:
-    active: "prod"
+    active: "test"

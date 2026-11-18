@@ -127,7 +127,7 @@ class VlessDuplexHandler(
         releaseHeaderBuffer()
         connectFuture?.takeIf { it.isCancellable }?.cancel(false)
         relaySession?.downstreamClosed()
-        ctx.fireChannelInactive()
+        super.channelInactive(ctx)
     }
 
     override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
@@ -200,7 +200,8 @@ class VlessDuplexHandler(
     private fun startRelay(ctx: ChannelHandlerContext, header: VlessRequestHeader, initialPayload: ByteBuf) {
         phase = Phase.Relaying
         val channel = ctx.channel()
-        val relay = TcpRelaySession(channel, maxPendingBytesPerDirection)
+        val target = "${header.host}:${header.port}"
+        val relay = TcpRelaySession(channel, maxPendingBytesPerDirection, target)
         relaySession = relay
 
         if (header.decodedAddons.isVision) {
@@ -211,7 +212,6 @@ class VlessDuplexHandler(
         channel.config().isAutoRead = false
         enqueueClientBytes(relay, initialPayload)
 
-        val target = "${header.host}:${header.port}"
         connectFuture = UpstreamChannelConnector.connect(
             channel.eventLoop(),
             object : ChannelInitializer<SocketChannel>() {
@@ -225,7 +225,7 @@ class VlessDuplexHandler(
             connectTimeoutMillis,
         ).addListener { future ->
             if (!future.isSuccess) {
-                relay.failed("could not connect to VLESS target $target", future.cause())
+                relay.failed("could not connect to VLESS target", future.cause())
             }
         }
     }

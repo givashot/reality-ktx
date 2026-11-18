@@ -2,16 +2,19 @@ package org.givashot.reality.relay
 
 import io.netty.buffer.ByteBuf
 import io.netty.channel.Channel
-import io.netty.channel.ConnectTimeoutException
+import org.givashot.reality.CONNECTION_NUM_KEY
 import org.slf4j.LoggerFactory
 import java.util.*
 
 class TcpRelaySession(
     private val downstream: Channel,
     private val maxPendingBytesPerDirection: Long,
+    target: String
 ) {
 
     private data class PendingDownstreamWrite(val bytes: ByteBuf, val size: Int)
+
+    private val logger = LoggerFactory.getLogger("TcpRelaySession#${downstream.attr(CONNECTION_NUM_KEY).get()}#$target")
 
     private val pendingDownstreamWrites = ArrayDeque<PendingDownstreamWrite>()
     private var upstreamChannel: Channel? = null
@@ -87,31 +90,26 @@ class TcpRelaySession(
     fun failed(reason: String, cause: Throwable? = null) {
         if (closed) return
         closed = true
-        releasePendingDownstreamWrites()
         if (cause == null) {
             logger.warn("Closing relay connection: $reason")
         } else {
-            if (cause is ConnectTimeoutException) {
-//                logger.warn("Connection timed out: $reason")
-            } else {
-                logger.warn("Closing relay connection: $reason", cause)
-            }
+            logger.warn("Closing relay connection: $reason", cause)
         }
         closeChannels()
     }
 
     fun downstreamClosed() {
+        logger.info("downstream closed")
         if (closed) return
         closed = true
-        releasePendingDownstreamWrites()
         closeChannels()
     }
 
     fun upstreamClosed() {
+        logger.info("upstream closed")
         if (closed) return
         closed = true
-        releasePendingDownstreamWrites()
-        if (downstream.isActive) downstream.close()
+        closeChannels()
     }
 
     private fun drainDownstreamWrites() {
@@ -203,6 +201,7 @@ class TcpRelaySession(
     }
 
     private fun closeChannels() {
+        releasePendingDownstreamWrites()
         setAutoRead(downstream, false)
         if (downstream.isActive) downstream.close()
         upstreamChannel?.let {
@@ -217,7 +216,4 @@ class TcpRelaySession(
         )
     }
 
-    companion object {
-        private val logger = LoggerFactory.getLogger(TcpRelaySession::class.java)
-    }
 }

@@ -111,26 +111,21 @@ class RealityTlsConnectionHandler(
     override fun write(ctx: ChannelHandlerContext, output: Any, promise: ChannelPromise) {
         if (!outboundPassthrough && output is ByteBuf && tlsConnection.state == TlsState.Established) {
             try {
-                if (logger.isDebugEnabled) {
-                    logger.debug(
-                        "write outbound application bytes, size = ${output.readableBytes()}, dump_content = ${
-                            ByteBufUtil.hexDump(
-                                output, output.readerIndex(),
-                                output.readableBytes().coerceAtMost(Int.MAX_VALUE)
-                            )
-                        }"
-                    )
-                } else {
-                    logger.atInfo().log {
-                        "write outbound application bytes, size = ${output.readableBytes()}, dump_content = ${
-                            ByteBufUtil.hexDump(
-                                output, output.readerIndex(),
-                                output.readableBytes().coerceAtMost(Int.MAX_VALUE)
-                            )
-                        }"
-                    }
+                val dumpMsg = {
+                    val maxDumpSize = if (logger.isDebugEnabled) Int.MAX_VALUE else 50
+                    "write outbound application bytes, size = ${output.readableBytes()}, dump_content = ${
+                        ByteBufUtil.hexDump(
+                            output,
+                            output.readerIndex(),
+                            output.readableBytes().coerceAtMost(maxDumpSize)
+                        )
+                    }"
                 }
-
+                if (logger.isDebugEnabled) {
+                    logger.debug(dumpMsg.invoke())
+                } else {
+                    logger.atInfo().log(dumpMsg)
+                }
                 val bytes = ByteArray(output.readableBytes())
                 output.getBytes(output.readerIndex(), bytes)
                 val records = tlsConnection.execute(TlsCommand.SendApplicationData(bytes))
@@ -163,10 +158,10 @@ class RealityTlsConnectionHandler(
     }
 
     override fun close(ctx: ChannelHandlerContext, promise: ChannelPromise?) {
-        logger.info("close called")
-        // the proxy dest closed the connection
+        logger.info("close called, outboundPassthrough = $outboundPassthrough")
+        // the proxy dest closed the connection or idle timeout
         if (!outboundPassthrough) {
-            // we hold the outer tls connection, we should seed close notify
+            // we hold the outer tls connection, we should send close notify
             val records = tlsConnection.execute(TlsCommand.Close)
             writeOutbound(ctx, *records.toTypedArray())
                 .addListener {
@@ -233,26 +228,16 @@ class RealityTlsConnectionHandler(
             TlsClientEvent.ClientFinished -> Unit
 
             is TlsClientEvent.ClientApplicationData -> {
+                val dumpMsg = {
+                    val maxDumpSize = if (logger.isDebugEnabled) Int.MAX_VALUE else 50
+                    "received inbound application bytes, size = ${event.data.size}, dump_content = ${
+                        ByteBufUtil.hexDump(event.data, 0, event.data.size.coerceAtMost(maxDumpSize))
+                    }"
+                }
                 if (logger.isDebugEnabled) {
-                    logger.debug(
-                        "received inbound application bytes, size = ${event.data.size}, dump_content =  ${
-                            ByteBufUtil.hexDump(
-                                event.data,
-                                0,
-                                event.data.size.coerceAtMost(Int.MAX_VALUE)
-                            )
-                        }"
-                    )
+                    logger.debug(dumpMsg.invoke())
                 } else {
-                    logger.atInfo().log {
-                        "received inbound application bytes, size = ${event.data.size}, dump_content =  ${
-                            ByteBufUtil.hexDump(
-                                event.data,
-                                0,
-                                event.data.size.coerceAtMost(50)
-                            )
-                        }"
-                    }
+                    logger.atInfo().log(dumpMsg)
                 }
                 ctx.fireChannelRead(Unpooled.wrappedBuffer(event.data))
             }
@@ -325,11 +310,17 @@ class RealityTlsConnectionHandler(
         if (rest.isNotEmpty()) {
             ctx.fireChannelRead(Unpooled.wrappedBuffer(rest))
         }
-        logger.info(
+        val dumpMsg = {
+            val maxDumpSize = if (logger.isDebugEnabled) Int.MAX_VALUE else 50
             "forwardUndecryptedInbound called, rest.size = ${rest.size}, dump_content = ${
-                ByteBufUtil.hexDump(rest, 0, rest.size.coerceAtMost(Int.MAX_VALUE))
+                ByteBufUtil.hexDump(rest, 0, rest.size.coerceAtMost(maxDumpSize))
             }"
-        )
+        }
+        if (logger.isDebugEnabled) {
+            logger.debug(dumpMsg.invoke())
+        } else {
+            logger.atInfo().log(dumpMsg)
+        }
     }
 
 }

@@ -47,7 +47,7 @@ fun main() {
                     ch.pipeline().channel().attr(CONNECTION_NUM_KEY).set(connNum)
                     ch.pipeline().addLast(
                         IdleStateHandler::class.java.simpleName,
-                        IdleStateHandler(60 * 5, 20, 0)
+                        IdleStateHandler(0, 0, 20)
                     )
                     ch.pipeline().addLast(LoggerHandler::class.java.simpleName, LoggerHandler())
                     val tlsConnectionHandler = RealityTlsConnectionHandler(

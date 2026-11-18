@@ -24,8 +24,9 @@ class FallbackChannelInboundHandler(
     var connectFuture: ChannelFuture? = null
 
     override fun handlerAdded(ctx: ChannelHandlerContext) {
+        val target = "${upstreamHost}:${upstreamPort}"
         val tcpRelaySession =
-            TcpRelaySession(ctx.channel(), maxPendingBytesPerDirection)
+            TcpRelaySession(ctx.channel(), maxPendingBytesPerDirection, target)
         this.tcpRelaySession = tcpRelaySession
 
         // Do not read downstream data until the upstream is connected and able to accept writes.
@@ -47,7 +48,7 @@ class FallbackChannelInboundHandler(
         ).addListener { future ->
             if (!future.isSuccess) {
                 tcpRelaySession.failed(
-                    "could not connect to fallback ${upstreamHost}:${upstreamPort}",
+                    "could not connect to fallback",
                     future.cause(),
                 )
             }

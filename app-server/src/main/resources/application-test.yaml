@@ -14,4 +14,4 @@ server:
 logging:
   config: classpath:logback-config-test&prod.xml
   files:
-    path: 'D:\logs\test\'
+    path: '/home/ec2-user/reality/logs/'
