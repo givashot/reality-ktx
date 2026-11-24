@@ -8,7 +8,7 @@ import org.givashot.tls.crypto.Tls13KeySchedule
 internal class HandshakeState {
     val transcript = TranscriptHash()
 
-    var clientHello: ClientHelloWrapper? = null
+    var clientHello: ClientHello? = null
     var negotiated: NegotiatedParameters? = null
     var keySchedule: Tls13KeySchedule? = null
     var handshakeTrafficSecrets: HandshakeTrafficSecrets? = null

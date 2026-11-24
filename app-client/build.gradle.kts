@@ -11,11 +11,8 @@ repositories {
 }
 
 dependencies {
-    implementation(libs.bctls)
     implementation(project(":tls"))
-    testImplementation(kotlin("test"))
 }
 
 application {
-    mainClass = "org.givashot.appclient.AppClientKt"
 }

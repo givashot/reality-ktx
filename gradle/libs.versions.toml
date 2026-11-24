@@ -7,10 +7,8 @@ kotlin = "2.4.20"
 kotlinxDatetime = "0.8.0"
 kotlinxSerializationJSON = "1.11.0"
 kotlinxCoroutines = "1.10.2"
-ioNetty = "4.2.18.Final"
+ioNetty = "4.2.21.Final"
 hopliteYaml = "2.9.0"
-bctls = "1.86.1"
-bcpkix = "1.86"
 slf4j = "2.0.20"
 logback = "1.6.6"
 
@@ -23,8 +21,6 @@ kotlinxSerialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-j
 kotlinxCoroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
 ioNetty = { module = "io.netty:netty-all", version.ref = "ioNetty" }
 hopliteYaml = { module = "com.sksamuel.hoplite:hoplite-yaml", version.ref = "hopliteYaml" }
-bctls = { module = "org.bouncycastle:bctls-jdk18on", version.ref = "bctls" }
-bcpkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bcpkix" }
 
 # Libraries can be bundled together for easier import
 [bundles]

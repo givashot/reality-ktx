@@ -25,7 +25,7 @@ internal class Tls13ServerHandshake(
         get() = checkNotNull(state.applicationTrafficSecrets) { "Application secrets are not available yet" }
 
     val hasLegacySessionId: Boolean
-        get() = checkNotNull(state.clientHello) { "ClientHello has not been received" }.base.sessionID.isNotEmpty()
+        get() = checkNotNull(state.clientHello) { "ClientHello has not been received" }.sessionId.isNotEmpty()
 
     fun reset() {
         state.reset()
@@ -40,7 +40,7 @@ internal class Tls13ServerHandshake(
     fun receiveFragment(fragment: ByteArray): HandshakeMessage? =
         singleMessage("handshake message", codec.feed(fragment), codec.pendingBytes)
 
-    fun onClientHello(message: HandshakeMessage): ClientHelloWrapper =
+    fun onClientHello(message: HandshakeMessage): ClientHello =
         codec.parseClientHello(message).also { state.clientHello = it }
 
     /** Cheap negotiation only: no key generation, so a failure can still fall back to the real site. */
@@ -62,12 +62,12 @@ internal class Tls13ServerHandshake(
         val transcript = state.transcript
 
         val serverHello = newServerHello(hello, negotiated)
-        val serverHelloBytes = codec.encodeServerHello(serverHello.base, serverHelloExtensionOrder)
+        val serverHelloBytes = codec.encodeServerHello(serverHello, serverHelloExtensionOrder)
         transcript.update(serverHelloBytes)
 
         val keySchedule = Tls13KeySchedule(suite)
         keySchedule.deriveEarlySecret()
-        keySchedule.deriveHandshakeSecret(serverHello.sharedSecret)
+        keySchedule.deriveHandshakeSecret(checkNotNull(serverHello.sharedSecret))
         val handshakeSecrets = keySchedule.handshakeTrafficSecrets(transcript.hash(suite))
 
         val extensionsBytes = codec.encodeEncryptedExtensions(encryptedExtensions)

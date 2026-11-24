@@ -5,7 +5,7 @@ import org.givashot.reality.ext.toHexByteArrayPadded
 import org.givashot.reality.crypto.ByteArrayKey
 import org.givashot.reality.crypto.RealityCrypto
 import org.givashot.tls.crypto.calcSharedSecret
-import org.givashot.tls.handshake.ClientHelloWrapper
+import org.givashot.tls.handshake.ClientHello
 import org.givashot.tls.crypto.x25519PrivateKeyFromBase64
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -33,19 +33,19 @@ class Authenticator(
 
     private val allowedClockSkewSeconds = realityConfig.allowedClockSkewSeconds
 
-    fun doAuth(clientHelloWrapper: ClientHelloWrapper): AuthResult {
+    fun doAuth(clientHello: ClientHello): AuthResult {
         var authFailed = true
         var authKey: ByteArray? = null
         var failedReason: String? = null
         try {
-            val sni = clientHelloWrapper.sni ?: throw Exception("sni is missing")
+            val sni = clientHello.sni ?: throw Exception("sni is missing")
             if (sni in acceptableSnis) {
-                val clientPK = clientHelloWrapper.clientPubKey ?: throw Exception("Client public key is missing")
+                val clientPK = clientHello.clientPubKey ?: throw Exception("Client public key is missing")
                 val sharedSecret = calcSharedSecret(serverPrivateKey, clientPK)
-                authKey = RealityCrypto.calculateAuthKey(sharedSecret, clientHelloWrapper.base.random)
+                authKey = RealityCrypto.calculateAuthKey(sharedSecret, clientHello.random)
                 val plaintext = RealityCrypto.decryptSessionId(
                     authKey = authKey,
-                    clientHelloWrapper = clientHelloWrapper,
+                    clientHello = clientHello,
                 )
                 val timestamp = ByteBuffer.wrap(plaintext, 4, 4).order(ByteOrder.BIG_ENDIAN).int.toLong() and 0xffffffffL
                 val nowSeconds = System.currentTimeMillis() / 1000

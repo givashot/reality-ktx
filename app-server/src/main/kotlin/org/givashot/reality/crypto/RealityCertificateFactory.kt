@@ -1,20 +1,15 @@
 package org.givashot.reality.crypto
 
-import org.bouncycastle.asn1.ASN1OctetString
-import org.bouncycastle.asn1.pkcs.PrivateKeyInfo
-import org.bouncycastle.asn1.x500.X500Name
-import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo
-import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
-import org.bouncycastle.jce.provider.BouncyCastleProvider
-import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
 import org.givashot.tls.crypto.globalSecureRandom
 import org.givashot.tls.handshake.CertificateData
+import java.io.ByteArrayOutputStream
 import java.math.BigInteger
 import java.security.KeyPairGenerator
 import java.security.PrivateKey
-import java.security.PublicKey
-import java.security.Security
-import java.util.*
+import java.security.Signature
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -26,6 +21,18 @@ private const val JCA_SIG_ALG_ED25519 = "Ed25519"
 private const val ED25519_KEY_SIZE_BYTES = 32
 private const val ED25519_SIGNATURE_SIZE_BYTES = 64
 
+// AlgorithmIdentifier: SEQUENCE { OID 1.3.101.112 (Ed25519) }
+private val ED25519_ALG_ID = byteArrayOf(0x30, 0x05, 0x06, 0x03, 0x2B, 0x65, 0x70)
+
+// Name: SEQUENCE { SET { SEQUENCE { OID 2.5.4.3 (CN), UTF8String "" } } }
+private val EMPTY_CN_NAME = byteArrayOf(
+    0x30, 0x0B, 0x31, 0x09, 0x30, 0x07, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0C, 0x00,
+)
+
+// [0] EXPLICIT INTEGER 2 (X.509 v3)
+private val X509_V3_VERSION = byteArrayOf(0xA0.toByte(), 0x03, 0x02, 0x01, 0x02)
+
+private val UTC_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyMMddHHmmss'Z'").withZone(ZoneOffset.UTC)
 
 data class TempCertKey(
     val privateKey: PrivateKey,
@@ -34,45 +41,50 @@ data class TempCertKey(
     val signedCert: ByteArray,
 )
 
-private fun ensureBouncyCastleProvider() {
-    if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
-        Security.addProvider(BouncyCastleProvider())
-    }
-}
-
 private val tmpCertKey: TempCertKey by lazy {
-    ensureBouncyCastleProvider()
-
-    val keyPair = KeyPairGenerator.getInstance(JCA_SIG_ALG_ED25519, BouncyCastleProvider.PROVIDER_NAME)
-        .generateKeyPair()
+    val keyPair = KeyPairGenerator.getInstance(JCA_SIG_ALG_ED25519).generateKeyPair()
     val privateKey = keyPair.private
     val publicKey = keyPair.public
-    val rawPrivate = extractRawEd25519Private(privateKey, publicKey)
-    val rawPublic = rawPrivate.copyOfRange(ED25519_KEY_SIZE_BYTES, ED25519_KEY_SIZE_BYTES * 2)
+
+    val privEncoded = privateKey.encoded
+    val rawSeed = privEncoded.copyOfRange(privEncoded.size - ED25519_KEY_SIZE_BYTES, privEncoded.size)
+    val pubEncoded = publicKey.encoded
+    val rawPublic = pubEncoded.copyOfRange(pubEncoded.size - ED25519_KEY_SIZE_BYTES, pubEncoded.size)
 
     val serialNumber = BigInteger(159, globalSecureRandom)
-    val subject = X500Name("CN=") // 空 CN，内容无所谓
-    val notBefore = Date(System.currentTimeMillis() - TimeUnit.DAYS.toMillis(1 + globalSecureRandom.nextInt(30).toLong()))
-    val notAfter = Date(notBefore.time + TimeUnit.DAYS.toMillis(90))
+    val notBeforeMillis = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(1 + globalSecureRandom.nextInt(30).toLong())
+    val notAfterMillis = notBeforeMillis + TimeUnit.DAYS.toMillis(90)
 
-    val certBuilder = JcaX509v3CertificateBuilder(
-        subject, // issuer == subject，自签名
-        serialNumber,
-        notBefore,
-        notAfter,
-        subject,
-        publicKey,
+    val tbsCert = derSequence(
+        X509_V3_VERSION,
+        derInteger(serialNumber.toByteArray()),
+        ED25519_ALG_ID,
+        EMPTY_CN_NAME,
+        derSequence(derUtcTime(notBeforeMillis), derUtcTime(notAfterMillis)),
+        EMPTY_CN_NAME,
+        pubEncoded,
     )
 
-    val signer = JcaContentSignerBuilder(JCA_SIG_ALG_ED25519)
-        .setProvider(BouncyCastleProvider.PROVIDER_NAME)
-        .build(privateKey)
+    val signature = Signature.getInstance(JCA_SIG_ALG_ED25519).run {
+        initSign(privateKey, globalSecureRandom)
+        update(tbsCert)
+        sign()
+    }
+    require(signature.size == ED25519_SIGNATURE_SIZE_BYTES) {
+        "Unexpected Ed25519 signature length: ${signature.size}"
+    }
+
+    val cert = derSequence(
+        tbsCert,
+        ED25519_ALG_ID,
+        derBitString(signature),
+    )
 
     TempCertKey(
         privateKey = privateKey,
-        rawPrivateKey = rawPrivate,
+        rawPrivateKey = rawSeed + rawPublic,
         publicKey = rawPublic,
-        signedCert = certBuilder.build(signer).encoded,
+        signedCert = cert,
     )
 }
 
@@ -97,21 +109,35 @@ fun applyAuthKeySignature(
     )
 }
 
-private fun extractRawEd25519Private(privateKey: PrivateKey, publicKey: PublicKey): ByteArray {
-    val privateKeyInfo = PrivateKeyInfo.getInstance(privateKey.encoded)
-    var seed = ASN1OctetString.getInstance(privateKeyInfo.parsePrivateKey()).octets
-    if (seed.size != ED25519_KEY_SIZE_BYTES) {
-        seed = ASN1OctetString.getInstance(seed).octets
+private fun derTlv(tag: Int, content: ByteArray): ByteArray {
+    val out = ByteArrayOutputStream()
+    out.write(tag)
+    val len = content.size
+    when {
+        len < 128 -> out.write(len)
+        len < 256 -> {
+            out.write(0x81)
+            out.write(len)
+        }
+        else -> {
+            out.write(0x82)
+            out.write((len ushr 8) and 0xFF)
+            out.write(len and 0xFF)
+        }
     }
-    require(seed.size == ED25519_KEY_SIZE_BYTES) {
-        "Unexpected Ed25519 private key seed length: ${seed.size}"
-    }
-
-    val publicKeyInfo = SubjectPublicKeyInfo.getInstance(publicKey.encoded)
-    val rawPublicKey = publicKeyInfo.publicKeyData.bytes
-    require(rawPublicKey.size == ED25519_KEY_SIZE_BYTES) {
-        "Unexpected Ed25519 public key length: ${rawPublicKey.size}"
-    }
-
-    return seed + rawPublicKey
+    out.write(content)
+    return out.toByteArray()
 }
+
+private fun derSequence(vararg items: ByteArray): ByteArray {
+    val out = ByteArrayOutputStream()
+    items.forEach(out::write)
+    return derTlv(0x30, out.toByteArray())
+}
+
+private fun derInteger(bytes: ByteArray): ByteArray = derTlv(0x02, bytes)
+
+private fun derBitString(bytes: ByteArray): ByteArray = derTlv(0x03, byteArrayOf(0x00) + bytes)
+
+private fun derUtcTime(epochMillis: Long): ByteArray =
+    derTlv(0x17, UTC_TIME_FORMATTER.format(Instant.ofEpochMilli(epochMillis)).toByteArray(Charsets.US_ASCII))

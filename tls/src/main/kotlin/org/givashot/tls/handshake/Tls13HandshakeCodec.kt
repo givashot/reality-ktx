@@ -1,13 +1,10 @@
 package org.givashot.tls.handshake
 
-import org.bouncycastle.tls.ClientHello
-import org.bouncycastle.tls.ServerHello
 import org.givashot.tls.connection.DecodeErrorException
 import org.givashot.tls.connection.IllegalParameterException
 import org.givashot.tls.constant.*
 import org.givashot.tls.ext.writeUint16
 import org.givashot.tls.ext.writeUint24
-import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.security.Signature
 
@@ -32,36 +29,7 @@ internal class Tls13HandshakeCodec {
     }
 
     /** Parses a complete ClientHello handshake message (4-byte header included). */
-    fun parseClientHello(message: HandshakeMessage): ClientHelloWrapper {
-        if (message.encodedBytes.size > TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH) {
-            throw DecodeErrorException(
-                "ClientHello size ${message.encodedBytes.size} exceeds limit $TLS_HANDSHAKE_MAX_CLIENT_HELLO_LENGTH"
-            )
-        }
-        val body = message.body
-        if (body.size < TLS_HANDSHAKE_SESSION_ID_LENGTH_OFFSET_BASE_BODY + 1) {
-            throw DecodeErrorException("ClientHello is truncated")
-        }
-        val sessionIdLengthOffset = TLS_HANDSHAKE_SESSION_ID_LENGTH_OFFSET_BASE_BODY
-        val sessionIdLength = body[sessionIdLengthOffset].toInt() and 0xFF
-        val sessionIdOffset = sessionIdLengthOffset + 1
-        if (sessionIdOffset + sessionIdLength > body.size) {
-            throw DecodeErrorException("ClientHello session ID is truncated")
-        }
-        val parsed = try {
-            ClientHello.parse(
-                ByteArrayInputStream(body, 0, body.size),
-                null,
-            )
-        } catch (e: Exception) {
-            throw DecodeErrorException(e.message ?: e.javaClass.simpleName)
-        }
-        if (sessionIdLength != parsed.sessionID.size) {
-            throw DecodeErrorException("ClientHello session ID length mismatch")
-
-        }
-        return ClientHelloWrapper(parsed, message.encodedBytes, TLS_HANDSHAKE_HEADER_LENGTH + sessionIdOffset)
-    }
+    fun parseClientHello(message: HandshakeMessage): ClientHello = message.parseClientHello()
 
     /** Returns the verify_data, which must be exactly [verifyDataLength] bytes (the hash length of the suite). */
     fun parseFinished(message: HandshakeMessage, verifyDataLength: Int): ByteArray {
@@ -84,21 +52,17 @@ internal class Tls13HandshakeCodec {
         return KeyUpdate(requestUpdate)
     }
 
-    fun encodeServerHello(serverHello: ServerHello, extensionOrder: List<Int>): ByteArray {
-        val extensionData = mutableMapOf<Int, ByteArray>()
-        val extensionTypes = serverHello.extensions.keys()
-        while (extensionTypes.hasMoreElements()) {
-            val type = extensionTypes.nextElement()
-            require(type is Int && type in 0..0xFFFF) { "ServerHello extension type is invalid" }
-            val data = serverHello.extensions[type]
-            require(data is ByteArray) { "ServerHello extension data must be a byte array" }
-            extensionData[type] = data
+    fun encodeServerHello(serverHello: ServerHello, extensionOrder: List<Int> = serverHello.extensionOrder): ByteArray {
+        val typesInOrder = if (extensionOrder.isEmpty()) {
+            serverHello.extensions.keys
+        } else {
+            extensionOrder.distinct().filter { it in serverHello.extensions } +
+                    serverHello.extensions.keys.filter { it !in extensionOrder }
         }
-        val typesInOrder = extensionOrder.distinct().filter { it in extensionData } +
-            (extensionData.keys - extensionOrder.toSet()).sorted()
         val extensions = ByteArrayOutputStream()
         typesInOrder.forEach { type ->
-            val data = checkNotNull(extensionData[type])
+            require(type in 0..0xFFFF) { "ServerHello extension type is invalid" }
+            val data = checkNotNull(serverHello.extensions[type])
             require(data.size <= 0xFFFF)
             extensions.writeUint16(type)
             extensions.writeUint16(data.size)
@@ -107,12 +71,10 @@ internal class Tls13HandshakeCodec {
         require(extensions.size() <= 0xFFFF) { "ServerHello extensions are too large" }
 
         val body = ByteArrayOutputStream()
-        val version = serverHello.version
-        val sessionId = serverHello.sessionID
+        val sessionId = serverHello.sessionId
         require(sessionId.size <= 32) { "ServerHello session ID is too large" }
         require(serverHello.random.size == 32) { "ServerHello random must be 32 bytes" }
-        body.write(version.majorVersion)
-        body.write(version.minorVersion)
+        body.writeUint16(serverHello.legacyVersion)
         body.write(serverHello.random)
         body.write(sessionId.size)
         body.write(sessionId)

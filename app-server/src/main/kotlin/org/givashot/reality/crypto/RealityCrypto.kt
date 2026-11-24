@@ -1,6 +1,6 @@
 package org.givashot.reality.crypto
 
-import org.givashot.tls.handshake.ClientHelloWrapper
+import org.givashot.tls.handshake.ClientHello
 import javax.crypto.Cipher
 import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
@@ -16,18 +16,18 @@ object RealityCrypto {
 
     fun decryptSessionId(
         authKey: ByteArray,
-        clientHelloWrapper: ClientHelloWrapper,
+        clientHello: ClientHello,
     ): ByteArray {
-        require(authKey.size == 32 && clientHelloWrapper.base.sessionID.size == 32)
-        val nonce = clientHelloWrapper.base.random.copyOfRange(20, 32)
+        require(authKey.size == 32 && clientHello.sessionId.size == 32)
+        val nonce = clientHello.random.copyOfRange(20, 32)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(
             Cipher.DECRYPT_MODE,
             SecretKeySpec(authKey, "AES"),
             GCMParameterSpec(128, nonce),
         )
-        cipher.updateAAD(clientHelloWrapper.aadWithZeroedSessionId())
-        val plaintext = cipher.doFinal(clientHelloWrapper.base.sessionID)
+        cipher.updateAAD(clientHello.aadWithZeroedSessionId())
+        val plaintext = cipher.doFinal(clientHello.sessionId)
         require(plaintext.size == 16) { "Plaintext must be 16 bytes" }
         return plaintext
     }

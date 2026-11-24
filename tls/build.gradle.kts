@@ -10,15 +10,8 @@ repositories {
 }
 
 dependencies {
-    testImplementation(kotlin("test"))
-    // Source: https://mvnrepository.com/artifact/org.bouncycastle/bctls-jdk18on
-    implementation(libs.bctls)
 }
 
 kotlin {
     jvmToolchain(25)
-}
-
-tasks.test {
-    useJUnitPlatform()
 }
