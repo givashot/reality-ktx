@@ -189,6 +189,12 @@ class TcpRelaySession(
     private fun setAutoRead(channel: Channel, enabled: Boolean) {
         if (channel.config().isAutoRead != enabled) {
             channel.config().isAutoRead = enabled
+            val logMsg = if (channel == downstream) {
+                "downstream setAutoRead, enabled=$enabled"
+            } else {
+                "upstream setAutoRead, enabled=$enabled"
+            }
+            logger.info(logMsg)
         }
     }
 

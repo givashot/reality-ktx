@@ -6,6 +6,7 @@ import io.netty.buffer.Unpooled
 import io.netty.channel.*
 import io.netty.channel.socket.SocketChannel
 import io.netty.handler.timeout.IdleStateEvent
+import io.netty.util.AttributeKey
 import io.netty.util.ReferenceCountUtil
 import org.givashot.reality.CONNECTION_NUM_KEY
 import org.givashot.reality.relay.TcpRelaySession
@@ -35,9 +36,11 @@ class VlessDuplexHandler(
 ) : ChannelDuplexHandler() {
 
     companion object {
-        const val DEFAULT_CONNECT_TIMEOUT_MILLIS = 5000
-        const val DEFAULT_MAX_PENDING_BYTES = 1L shl 20
+        private const val DEFAULT_CONNECT_TIMEOUT_MILLIS = 5000
+        private const val DEFAULT_MAX_PENDING_BYTES = 1L shl 20
         private const val MAX_HEADER_BYTES = 1024
+
+        val TARGET_KEY : AttributeKey<String> = AttributeKey.valueOf("TARGET_KEY")
     }
 
     private enum class Phase { WaitingHeader, Relaying, Closed }
@@ -163,6 +166,9 @@ class VlessDuplexHandler(
             }
 
             is VlessParseResult.Complete -> {
+                val target = "${result.header.host}:${result.header.port}"
+                ctx.channel().attr(TARGET_KEY).set(target)
+                logger = LoggerFactory.getLogger("VlessHandler#${ctx.channel().attr(CONNECTION_NUM_KEY).get()}#$target")
                 logger.info("vless parse received: $result, uuid = ${String(result.header.uuid)}")
                 val rejection = flowPolicy.check(result.header)
                 if (rejection != null) {
@@ -200,8 +206,7 @@ class VlessDuplexHandler(
     private fun startRelay(ctx: ChannelHandlerContext, header: VlessRequestHeader, initialPayload: ByteBuf) {
         phase = Phase.Relaying
         val channel = ctx.channel()
-        val target = "${header.host}:${header.port}"
-        val relay = TcpRelaySession(channel, maxPendingBytesPerDirection, target)
+        val relay = TcpRelaySession(channel, maxPendingBytesPerDirection, "${header.host}:${header.port}")
         relaySession = relay
 
         if (header.decodedAddons.isVision) {

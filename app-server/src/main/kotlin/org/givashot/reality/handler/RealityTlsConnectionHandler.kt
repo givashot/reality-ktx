@@ -12,6 +12,7 @@ import org.givashot.reality.authentication.Authenticator
 import org.givashot.reality.crypto.applyAuthKeySignature
 import org.givashot.reality.fallback.FallbackHandlerFactory
 import org.givashot.reality.fallback.HandshakeRecordProfile
+import org.givashot.reality.handler.VlessDuplexHandler.Companion.TARGET_KEY
 import org.givashot.tls.ServerProfile
 import org.givashot.tls.connection.TlsClientEvent
 import org.givashot.tls.connection.TlsCommand
@@ -32,8 +33,6 @@ class RealityTlsConnectionHandler(
         private val CLOSE_CAUSE_KEY = AttributeKey.valueOf<Throwable>("CLOSE_CAUSE_KEY")
     }
 
-    private lateinit var logger: Logger
-
     private val tlsConnection = TlsConnection.create(
         ServerProfile(),
     )
@@ -47,6 +46,28 @@ class RealityTlsConnectionHandler(
     private var inboundPassthrough = false
     private var outboundPassthrough = false
     private var readingTls = false
+
+    private var connLogger: Logger? = null
+    private var connTargetLogger: Logger? = null
+
+    private val logger: Logger get()  {
+        return if (connTargetLogger != null) {
+            connTargetLogger!!
+        } else {
+            if (context!!.channel().hasAttr(TARGET_KEY)) {
+                connLogger = null
+                connTargetLogger = LoggerFactory.getLogger("TlsHandler" +
+                        "#${context!!.channel().attr(CONNECTION_NUM_KEY).get()}" +
+                        "#${context!!.channel().attr(TARGET_KEY).get()}")
+                connTargetLogger!!
+            } else {
+                if (connLogger == null) {
+                    connLogger = LoggerFactory.getLogger("TlsHandler#${context!!.channel().attr(CONNECTION_NUM_KEY).get()}")
+                }
+                connLogger!!
+            }
+        }
+    }
 
     override fun stopDecrypting() {
         logger.info("Stop decrypting called")
@@ -63,7 +84,6 @@ class RealityTlsConnectionHandler(
 
     override fun handlerAdded(ctx: ChannelHandlerContext) {
         context = ctx
-        logger = LoggerFactory.getLogger("TlsConnectionHandler#${ctx.channel().attr(CONNECTION_NUM_KEY).get()}")
     }
 
     override fun channelRead(ctx: ChannelHandlerContext, input: Any) {
@@ -112,7 +132,7 @@ class RealityTlsConnectionHandler(
         if (!outboundPassthrough && output is ByteBuf && tlsConnection.state == TlsState.Established) {
             try {
                 val dumpMsg = {
-                    val maxDumpSize = if (logger.isDebugEnabled) Int.MAX_VALUE else 50
+                    val maxDumpSize = if (logger.isDebugEnabled) Int.MAX_VALUE else 100
                     "write outbound application bytes, size = ${output.readableBytes()}, dump_content = ${
                         ByteBufUtil.hexDump(
                             output,
@@ -229,7 +249,7 @@ class RealityTlsConnectionHandler(
 
             is TlsClientEvent.ClientApplicationData -> {
                 val dumpMsg = {
-                    val maxDumpSize = if (logger.isDebugEnabled) Int.MAX_VALUE else 50
+                    val maxDumpSize = if (logger.isDebugEnabled) Int.MAX_VALUE else 100
                     "received inbound application bytes, size = ${event.data.size}, dump_content = ${
                         ByteBufUtil.hexDump(event.data, 0, event.data.size.coerceAtMost(maxDumpSize))
                     }"
@@ -311,7 +331,7 @@ class RealityTlsConnectionHandler(
             ctx.fireChannelRead(Unpooled.wrappedBuffer(rest))
         }
         val dumpMsg = {
-            val maxDumpSize = if (logger.isDebugEnabled) Int.MAX_VALUE else 50
+            val maxDumpSize = if (logger.isDebugEnabled) Int.MAX_VALUE else 100
             "forwardUndecryptedInbound called, rest.size = ${rest.size}, dump_content = ${
                 ByteBufUtil.hexDump(rest, 0, rest.size.coerceAtMost(maxDumpSize))
             }"

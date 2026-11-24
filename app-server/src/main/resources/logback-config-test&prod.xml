@@ -15,7 +15,7 @@
         </rollingPolicy>
 
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level --- [%-24thread] %-40.40logger{40} : %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level --- [%-24thread] %-40.100logger{100} : %msg%n</pattern>
         </encoder>
 
         <!--        只处理INFO级别以及之上的日志 -->
@@ -48,7 +48,7 @@
         </rollingPolicy>
 
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} --- [%-24thread] %-40.40logger{40} : %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} --- [%-24thread] %-40.100logger{100} : %msg%n</pattern>
         </encoder>
 
         <!--        只处理WARN级别的日志 -->
@@ -82,7 +82,7 @@
         </rollingPolicy>
 
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} --- [%-24thread] %-40.40logger{40} : %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} --- [%-24thread] %-40.100logger{100} : %msg%n</pattern>
         </encoder>
 
         <!--        只处理ERROR级别的日志 -->

@@ -6,15 +6,38 @@ import io.netty.channel.ChannelDuplexHandler
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelPromise
 import org.givashot.reality.CONNECTION_NUM_KEY
+import org.givashot.reality.handler.VlessDuplexHandler.Companion.TARGET_KEY
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 class LoggerHandler : ChannelDuplexHandler() {
 
-    private lateinit var logger: Logger
+    private var context: ChannelHandlerContext? = null
+    private var connLogger: Logger? = null
+    private var connTargetLogger: Logger? = null
+
+    private val logger: Logger get()  {
+        return if (connTargetLogger != null) {
+            connTargetLogger!!
+        } else {
+            if (context!!.channel().hasAttr(TARGET_KEY)) {
+                connLogger = null
+                connTargetLogger = LoggerFactory.getLogger("LoggerHandler" +
+                        "#${context!!.channel().attr(CONNECTION_NUM_KEY).get()}" +
+                        "#${context!!.channel().attr(TARGET_KEY).get()}")
+                connTargetLogger!!
+            } else {
+                if (connLogger == null) {
+                    connLogger = LoggerFactory.getLogger("LoggerHandler" +
+                            "#${context!!.channel().attr(CONNECTION_NUM_KEY).get()}")
+                }
+                connLogger!!
+            }
+        }
+    }
 
     override fun handlerAdded(ctx: ChannelHandlerContext) {
-        logger = LoggerFactory.getLogger("LoggerHandler#${ctx.channel().attr(CONNECTION_NUM_KEY).get()}")
+        context = ctx
     }
 
     override fun channelRead(ctx: ChannelHandlerContext?, msg: Any?) {
@@ -30,23 +53,20 @@ class LoggerHandler : ChannelDuplexHandler() {
     private fun logMessage(direction: String, msg: Any?) {
         if (msg is ByteBuf) {
             val length = msg.readableBytes()
-            logger.atDebug().log {
+            val dumpMsg = {
+                val maxDumpSize = if (logger.isDebugEnabled) Int.MAX_VALUE else 100
                 "{$direction} -> length={$length}, dumpBytes={${
                     ByteBufUtil.hexDump(
                         msg,
                         msg.readerIndex(),
-                        minOf(length, Int.MAX_VALUE)
+                        minOf(length, maxDumpSize)
                     )
                 }}"
             }
-            logger.atInfo().log {
-                "{$direction} -> length={$length}, dumpBytes={${
-                    ByteBufUtil.hexDump(
-                        msg,
-                        msg.readerIndex(),
-                        minOf(length, 9)
-                    )
-                }}"
+            if (logger.isDebugEnabled) {
+                logger.debug(dumpMsg.invoke())
+            } else {
+                logger.atInfo().log(dumpMsg)
             }
         } else {
             logger.atInfo().log {
