@@ -2,7 +2,6 @@ package org.givashot.tls.crypto
 
 import java.nio.ByteBuffer
 import java.security.MessageDigest
-import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 /** TLS 1.3 HKDF key schedule (RFC 8446 section 7.1). Stages must be derived in order. */
@@ -182,10 +181,13 @@ internal class Tls13KeySchedule(private val cipherSuite: CipherSuite) {
     }
 
     private fun emptyHash(cipherSuite: CipherSuite): ByteArray =
-        MessageDigest.getInstance(cipherSuite.hash).digest(ByteArray(0))
+        tlsMd(cipherSuite.hash).run {
+            reset()
+            digest(ByteArray(0))
+        }
 
     private fun hmac(key: ByteArray, input: ByteArray, cipherSuite: CipherSuite): ByteArray =
-        Mac.getInstance("Hmac${cipherSuite.hash.replace("-", "")}").run {
+        tlsMac("Hmac${cipherSuite.hash.replace("-", "")}").run {
             init(SecretKeySpec(key, algorithm))
             doFinal(input)
         }

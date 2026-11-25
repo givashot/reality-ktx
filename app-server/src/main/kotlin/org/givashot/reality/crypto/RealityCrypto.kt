@@ -1,8 +1,9 @@
 package org.givashot.reality.crypto
 
+import org.givashot.tls.crypto.tlsCipher
+import org.givashot.tls.crypto.tlsMac
 import org.givashot.tls.handshake.ClientHello
 import javax.crypto.Cipher
-import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
@@ -20,7 +21,7 @@ object RealityCrypto {
     ): ByteArray {
         require(authKey.size == 32 && clientHello.sessionId.size == 32)
         val nonce = clientHello.random.copyOfRange(20, 32)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        val cipher = tlsCipher("AES/GCM/NoPadding")
         cipher.init(
             Cipher.DECRYPT_MODE,
             SecretKeySpec(authKey, "AES"),
@@ -50,7 +51,7 @@ object RealityCrypto {
     }
 
     private fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray =
-        Mac.getInstance("HmacSHA256").run {
+        tlsMac("HmacSHA256").run {
             init(SecretKeySpec(key, algorithm))
             doFinal(data)
         }

@@ -1,6 +1,7 @@
 package org.givashot.reality.crypto
 
 import org.givashot.tls.crypto.globalSecureRandom
+import org.givashot.tls.crypto.tlsMac
 import org.givashot.tls.handshake.CertificateData
 import java.io.ByteArrayOutputStream
 import java.math.BigInteger
@@ -11,7 +12,6 @@ import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
-import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 // TLS 1.3 SignatureScheme.ed25519 = 0x0807
@@ -94,7 +94,7 @@ fun applyAuthKeySignature(
     require(authKey.isNotEmpty()) { "AuthKey cannot be empty" }
 
     val cert = tmpCertKey.signedCert.copyOf()
-    val mac = Mac.getInstance("HmacSHA512")
+    val mac = tlsMac("HmacSHA512")
     mac.init(SecretKeySpec(authKey, "HmacSHA512"))
     mac.update(tmpCertKey.publicKey)
     val hmac = mac.doFinal()

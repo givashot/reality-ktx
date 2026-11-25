@@ -7,6 +7,7 @@ import org.givashot.tls.connection.UnexpectedRecordException
 import org.givashot.tls.constant.*
 import org.givashot.tls.crypto.CipherSuite
 import org.givashot.tls.crypto.TrafficKeys
+import org.givashot.tls.crypto.tlsCipher
 import java.io.ByteArrayOutputStream
 import java.security.GeneralSecurityException
 import java.util.*
@@ -333,7 +334,7 @@ internal class TlsRecordLayer(
         nonce: ByteArray,
         cipherSuite: CipherSuite,
     ): Cipher {
-        val cipher = Cipher.getInstance(cipherSuite.aead)
+        val cipher = tlsCipher(cipherSuite.aead)
         val keySpec = SecretKeySpec(key, if (cipherSuite.aead.startsWith("AES")) "AES" else "ChaCha20")
         if (cipherSuite.aead.startsWith("AES")) {
             cipher.init(mode, keySpec, GCMParameterSpec(cipherSuite.tagLen * 8, nonce))
